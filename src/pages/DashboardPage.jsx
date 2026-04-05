@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
-import { getFixedCosts, getCategories, getMonthlyAmount, getYearlyAmount, isCostActive, getCurrentAmount, getFrequencyLabel } from '../lib/firestore';
-import { TrendingUp, Calendar, CreditCard, PieChart as PieChartIcon, ArrowRight, BarChart3, ChevronLeft, ChevronRight, Settings2, Eye, EyeOff, Filter } from 'lucide-react';
+import { getFixedCosts, getCategories, getIncomeSources, getMonthlyAmount, getYearlyAmount, isCostActive, getCurrentAmount, getFrequencyLabel } from '../lib/firestore';
+import { TrendingUp, Calendar, CreditCard, PieChart as PieChartIcon, ArrowRight, BarChart3, ChevronLeft, ChevronRight, Settings2, Eye, EyeOff, Filter, Wallet, ArrowDownUp } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
@@ -108,6 +108,7 @@ function DonutLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent, value
 export default function DashboardPage() {
   const { user } = useAuth();
   const [costs, setCosts] = useState([]);
+  const [incomes, setIncomes] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
@@ -130,10 +131,12 @@ export default function DashboardPage() {
     if (!user) return;
     Promise.all([
       getFixedCosts(user.username),
-      getCategories(user.username)
-    ]).then(([c, cats]) => {
+      getCategories(user.username),
+      getIncomeSources(user.username)
+    ]).then(([c, cats, inc]) => {
       setCosts(c);
       setCategories(cats);
+      setIncomes(inc);
       setLoading(false);
     });
   }, [user]);
@@ -154,6 +157,44 @@ export default function DashboardPage() {
 
   const totalMonthly = relevantCosts.reduce((sum, c) => sum + getMonthlyAmount(c), 0);
   const totalYearly = relevantCosts.reduce((sum, c) => sum + getYearlyAmount(c), 0);
+
+  // Income calculations - filter same way as costs
+  const relevantIncomes = useMemo(() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    return incomes.filter(inc => {
+      if (inc.cancelledDate && inc.cancelledDate <= todayStr) return false;
+      if (viewMode === 'after-cancel' && inc.cancelledDate) return false;
+      if (inc.startDate && inc.startDate > todayStr) return false;
+      return true;
+    });
+  }, [incomes, viewMode]);
+
+  const totalMonthlyIncome = relevantIncomes.reduce((sum, inc) => sum + getMonthlyAmount(inc), 0);
+  const totalYearlyIncome = relevantIncomes.reduce((sum, inc) => sum + getYearlyAmount(inc), 0);
+  const monthlyRemaining = totalMonthlyIncome - totalMonthly;
+
+  // Per-month remaining for current year (each month can differ due to frequencies)
+  const monthlyRemainingByMonth = useMemo(() => {
+    const year = new Date().getFullYear();
+    return MONTH_NAMES.map((_, monthIdx) => {
+      const dateStr = `${year}-${String(monthIdx + 1).padStart(2, '0')}-15`;
+      // Sum expenses for this month
+      let expenseTotal = 0;
+      relevantCosts.forEach(c => {
+        if (!isCostActiveAtDate(c, dateStr)) return;
+        if (!costPaysInMonth(c, year, monthIdx)) return;
+        expenseTotal += getAmountAtDate(c, dateStr);
+      });
+      // Sum incomes for this month
+      let incomeTotal = 0;
+      relevantIncomes.forEach(inc => {
+        if (!isCostActiveAtDate(inc, dateStr)) return;
+        if (!costPaysInMonth(inc, year, monthIdx)) return;
+        incomeTotal += getAmountAtDate(inc, dateStr);
+      });
+      return { month: MONTH_NAMES[monthIdx], income: Math.round(incomeTotal * 100) / 100, expenses: Math.round(expenseTotal * 100) / 100, remaining: Math.round((incomeTotal - expenseTotal) * 100) / 100 };
+    });
+  }, [relevantCosts, relevantIncomes]);
 
   const categoryMap = {};
   categories.forEach(cat => { categoryMap[cat.id] = cat; });
@@ -392,18 +433,32 @@ export default function DashboardPage() {
       </motion.div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-        <motion.div variants={item} className="glass rounded-xl p-3 flex items-center gap-2.5 hover:border-primary-500/30 transition-all">
-          <div className="p-1.5 rounded-lg bg-primary-500/15 text-primary-400"><CreditCard className="w-4 h-4" /></div>
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5">
+        <motion.div variants={item} className="glass rounded-xl p-3 flex items-center gap-2.5 hover:border-red-500/30 transition-all">
+          <div className="p-1.5 rounded-lg bg-red-500/15 text-red-400"><CreditCard className="w-4 h-4" /></div>
           <div>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wider">Monatlich</p>
-            <p className="text-sm font-bold text-white leading-tight">{fmt(totalMonthly)}</p>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider">Ausgaben/M</p>
+            <p className="text-sm font-bold text-red-400 leading-tight">{fmt(totalMonthly)}</p>
+          </div>
+        </motion.div>
+        <motion.div variants={item} className="glass rounded-xl p-3 flex items-center gap-2.5 hover:border-green-500/30 transition-all">
+          <div className="p-1.5 rounded-lg bg-green-500/15 text-green-400"><Wallet className="w-4 h-4" /></div>
+          <div>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider">Einnahmen/M</p>
+            <p className="text-sm font-bold text-green-400 leading-tight">{fmt(totalMonthlyIncome)}</p>
+          </div>
+        </motion.div>
+        <motion.div variants={item} className={`glass rounded-xl p-3 flex items-center gap-2.5 transition-all ${monthlyRemaining >= 0 ? 'hover:border-emerald-500/30' : 'hover:border-red-500/30'}`}>
+          <div className={`p-1.5 rounded-lg ${monthlyRemaining >= 0 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}><ArrowDownUp className="w-4 h-4" /></div>
+          <div>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider">Verbleibend/M</p>
+            <p className={`text-sm font-bold leading-tight ${monthlyRemaining >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmt(monthlyRemaining)}</p>
           </div>
         </motion.div>
         <motion.div variants={item} className="glass rounded-xl p-3 flex items-center gap-2.5 hover:border-accent-500/30 transition-all">
           <div className="p-1.5 rounded-lg bg-accent-500/15 text-accent-400"><TrendingUp className="w-4 h-4" /></div>
           <div>
-            <p className="text-[10px] text-slate-500 uppercase tracking-wider">Jährlich</p>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider">Ausgaben/J</p>
             <p className="text-sm font-bold text-white leading-tight">{fmt(totalYearly)}</p>
           </div>
         </motion.div>
@@ -411,7 +466,7 @@ export default function DashboardPage() {
           <div className="p-1.5 rounded-lg bg-green-500/15 text-green-400"><PieChartIcon className="w-4 h-4" /></div>
           <div>
             <p className="text-[10px] text-slate-500 uppercase tracking-wider">Aktive Posten</p>
-            <p className="text-sm font-bold text-white leading-tight">{relevantCosts.length}</p>
+            <p className="text-sm font-bold text-white leading-tight">{relevantCosts.length} Ausg. · {relevantIncomes.length} Einn.</p>
           </div>
         </motion.div>
         <motion.div variants={item} className="glass rounded-xl p-3 flex items-center gap-2.5 hover:border-amber-500/30 transition-all">
@@ -422,6 +477,27 @@ export default function DashboardPage() {
           </div>
         </motion.div>
       </div>
+
+      {/* Monthly remaining breakdown */}
+      {relevantIncomes.length > 0 && (
+        <motion.div variants={item} className="glass rounded-2xl p-4">
+          <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-3">
+            <ArrowDownUp className="w-4 h-4 text-emerald-400" /> Monatliche Bilanz {new Date().getFullYear()}
+          </h2>
+          <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-12 gap-1.5">
+            {monthlyRemainingByMonth.map((m, i) => (
+              <div key={i} className="text-center">
+                <p className="text-[10px] text-slate-500 mb-1">{m.month}</p>
+                <p className={`text-xs font-bold ${m.remaining >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {m.remaining >= 0 ? '+' : ''}{fmtShort(m.remaining)}
+                </p>
+                <p className="text-[9px] text-slate-600 mt-0.5">{fmtShort(m.income)}</p>
+                <p className="text-[9px] text-red-400/50">-{fmtShort(m.expenses)}</p>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Upcoming payments */}
