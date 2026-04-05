@@ -49,21 +49,58 @@ export default function DashboardPage() {
     categoryBreakdown[catId].count += 1;
   });
 
-  // Upcoming payments (next 30 days)
+  // Compute actual next payment dates respecting frequency
   const today = new Date();
-  const upcomingPayments = activeCosts
-    .map(c => {
+  const todayStr = today.toISOString().slice(0, 10);
+  const minDate = new Date(today);
+  minDate.setDate(minDate.getDate() - 4);
+  const maxDate = new Date(today);
+  maxDate.setDate(maxDate.getDate() + 31);
+
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+
+  const allUpcomingPayments = activeCosts
+    .flatMap(c => {
       const day = c.paymentDay || 1;
-      let nextDate = new Date(today.getFullYear(), today.getMonth(), day);
-      if (nextDate < today) nextDate.setMonth(nextDate.getMonth() + 1);
-      return { ...c, nextDate, currentAmount: getCurrentAmount(c) };
+      const startDate = c.startDate ? new Date(c.startDate) : new Date(2000, 0, 1);
+      const results = [];
+
+      if (c.frequency === 'yearly') {
+        // Yearly: check payment month from start date
+        const startMonth = startDate.getMonth();
+        for (let yearOff = -1; yearOff <= 1; yearOff++) {
+          const payDate = new Date(today.getFullYear() + yearOff, startMonth, day);
+          if (payDate >= minDate && payDate <= maxDate) {
+            results.push({ ...c, nextDate: payDate, currentAmount: getCurrentAmount(c) });
+          }
+        }
+      } else if (c.frequency === 'custom' && c.frequencyMonths > 1) {
+        // Custom: every X months from start date
+        const freqMonths = c.frequencyMonths;
+        const startMonthTotal = startDate.getFullYear() * 12 + startDate.getMonth();
+        // Scan months in range
+        for (let m = -2; m <= 2; m++) {
+          const checkDate = new Date(today.getFullYear(), today.getMonth() + m, day);
+          const checkMonthTotal = checkDate.getFullYear() * 12 + checkDate.getMonth();
+          const diffMonths = checkMonthTotal - startMonthTotal;
+          if (diffMonths >= 0 && diffMonths % freqMonths === 0 && checkDate >= minDate && checkDate <= maxDate) {
+            results.push({ ...c, nextDate: checkDate, currentAmount: getCurrentAmount(c) });
+          }
+        }
+      } else {
+        // Monthly
+        for (let m = -1; m <= 1; m++) {
+          const payDate = new Date(today.getFullYear(), today.getMonth() + m, day);
+          if (payDate >= minDate && payDate <= maxDate) {
+            results.push({ ...c, nextDate: payDate, currentAmount: getCurrentAmount(c) });
+          }
+        }
+      }
+      return results;
     })
-    .filter(c => {
-      const diff = (c.nextDate - today) / (1000 * 60 * 60 * 24);
-      return diff <= 30;
-    })
-    .sort((a, b) => a.nextDate - b.nextDate)
-    .slice(0, 5);
+    .sort((a, b) => a.nextDate - b.nextDate);
+
+  const upcomingPayments = showAllUpcoming ? allUpcomingPayments : allUpcomingPayments.slice(0, 10);
 
   const fmt = (n) => n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
 
@@ -158,34 +195,48 @@ export default function DashboardPage() {
               Alle <ArrowRight className="w-4 h-4" />
             </Link>
           </div>
-          {upcomingPayments.length === 0 ? (
+          {allUpcomingPayments.length === 0 ? (
             <p className="text-slate-500 text-sm py-4 text-center">Keine anstehenden Abbuchungen</p>
           ) : (
             <div className="space-y-3">
-              {upcomingPayments.map((cost, i) => (
-                <motion.div
-                  key={cost.id}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.1 * i }}
-                  className="flex items-center justify-between p-3 rounded-xl bg-surface-light/50 hover:bg-surface-lighter/50 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg">
-                      {categoryMap[cost.categoryId]?.icon || '📌'}
-                    </span>
-                    <div>
-                      <p className="text-sm font-medium text-white">{cost.name}</p>
-                      <p className="text-xs text-slate-500">
-                        {cost.nextDate.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}
-                        {' · '}
-                        {getFrequencyLabel(cost)}
-                      </p>
+              {upcomingPayments.map((cost, i) => {
+                const isPast = cost.nextDate < today;
+                return (
+                  <motion.div
+                    key={`${cost.id}-${cost.nextDate.toISOString()}`}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.05 * i }}
+                    className={`flex items-center justify-between p-3 rounded-xl transition-colors ${
+                      isPast ? 'bg-surface-light/30 opacity-60' : 'bg-surface-light/50 hover:bg-surface-lighter/50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-lg">
+                        {categoryMap[cost.categoryId]?.icon || '📌'}
+                      </span>
+                      <div>
+                        <p className="text-sm font-medium text-white">{cost.name}</p>
+                        <p className="text-xs text-slate-500">
+                          {cost.nextDate.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                          {' · '}
+                          {getFrequencyLabel(cost)}
+                          {isPast && ' · vergangen'}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  <span className="text-sm font-semibold text-white">{fmt(cost.currentAmount)}</span>
-                </motion.div>
-              ))}
+                    <span className="text-sm font-semibold text-white">{fmt(cost.currentAmount)}</span>
+                  </motion.div>
+                );
+              })}
+              {allUpcomingPayments.length > 10 && (
+                <button
+                  onClick={() => setShowAllUpcoming(!showAllUpcoming)}
+                  className="w-full text-center text-sm text-primary-400 hover:text-primary-300 py-2 transition-colors"
+                >
+                  {showAllUpcoming ? 'Weniger anzeigen' : `Mehr anzeigen (${allUpcomingPayments.length - 10} weitere)`}
+                </button>
+              )}
             </div>
           )}
         </motion.div>

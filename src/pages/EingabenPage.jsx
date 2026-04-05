@@ -66,12 +66,19 @@ export default function EingabenPage() {
     setShowForm(false);
   };
 
+  const parseAmount = (val) => {
+    if (!val && val !== 0) return 0;
+    // Support German comma format: "12,50" -> 12.50
+    return parseFloat(String(val).replace(',', '.')) || 0;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.name.trim()) return;
 
     if (editingCost) {
-      await updateFixedCost(user.username, editingCost.id, {
+      // Update amount history if start amount changed
+      const updates = {
         name: form.name,
         categoryId: form.categoryId,
         paymentDay: parseInt(form.paymentDay) || 1,
@@ -79,7 +86,20 @@ export default function EingabenPage() {
         frequencyMonths: parseInt(form.frequencyMonths) || 1,
         startDate: form.startDate,
         notes: form.notes
-      });
+      };
+      if (form.amount !== '' && form.amount !== undefined) {
+        const newAmt = parseAmount(form.amount);
+        const history = editingCost.amountHistory || [];
+        if (history.length > 0) {
+          // Update the first (start) entry
+          const sorted = [...history].sort((a, b) => a.validFrom.localeCompare(b.validFrom));
+          sorted[0] = { ...sorted[0], amount: newAmt };
+          updates.amountHistory = sorted;
+        } else {
+          updates.amountHistory = [{ amount: newAmt, validFrom: form.startDate }];
+        }
+      }
+      await updateFixedCost(user.username, editingCost.id, updates);
     } else {
       await addFixedCost(user.username, {
         name: form.name,
@@ -87,7 +107,7 @@ export default function EingabenPage() {
         paymentDay: parseInt(form.paymentDay) || 1,
         frequency: form.frequency,
         frequencyMonths: parseInt(form.frequencyMonths) || 1,
-        amount: parseFloat(form.amount) || 0,
+        amount: parseAmount(form.amount),
         startDate: form.startDate,
         notes: form.notes
       });
@@ -104,7 +124,7 @@ export default function EingabenPage() {
       paymentDay: cost.paymentDay || 1,
       frequency: cost.frequency || 'monthly',
       frequencyMonths: cost.frequencyMonths || 1,
-      amount: getCurrentAmount(cost),
+      amount: String(getCurrentAmount(cost)).replace('.', ','),
       startDate: cost.startDate || '',
       notes: cost.notes || ''
     });
@@ -116,7 +136,7 @@ export default function EingabenPage() {
     if (!newAmount && newAmount !== 0) return;
     const updatedHistory = [
       ...(cost.amountHistory || []),
-      { amount: parseFloat(newAmount), validFrom: newAmountDate }
+      { amount: parseAmount(newAmount), validFrom: newAmountDate }
     ];
     await updateFixedCost(user.username, cost.id, { amountHistory: updatedHistory });
     setShowAmountEdit(null);
@@ -229,21 +249,21 @@ export default function EingabenPage() {
                   </select>
                 </div>
 
-                {/* Amount (only for new entries) */}
-                {!editingCost && (
-                  <div>
-                    <label className="block text-sm text-slate-400 mb-1.5">Betrag (EUR) *</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={form.amount}
-                      onChange={e => setForm({ ...form, amount: e.target.value })}
-                      placeholder="0.00"
-                      className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white placeholder-slate-500 transition-colors"
-                      required
-                    />
-                  </div>
-                )}
+                {/* Amount */}
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1.5">
+                    {editingCost ? 'Startbetrag (EUR)' : 'Betrag (EUR) *'}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={form.amount}
+                    onChange={e => setForm({ ...form, amount: e.target.value })}
+                    placeholder="0,00"
+                    className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white placeholder-slate-500 transition-colors"
+                    required={!editingCost}
+                  />
+                </div>
 
                 {/* Payment day */}
                 <div>
@@ -444,11 +464,11 @@ export default function EingabenPage() {
                               <p className="text-xs text-slate-500">Der alte Betrag bleibt in der Historie erhalten.</p>
                               <div className="flex flex-wrap gap-3">
                                 <input
-                                  type="number"
-                                  step="0.01"
+                                  type="text"
+                                  inputMode="decimal"
                                   value={newAmount}
                                   onChange={e => setNewAmount(e.target.value)}
-                                  placeholder="Neuer Betrag"
+                                  placeholder="Neuer Betrag (z.B. 12,50)"
                                   className="flex-1 min-w-[120px] px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 text-sm text-white outline-none"
                                 />
                                 <input

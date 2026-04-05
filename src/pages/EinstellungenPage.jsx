@@ -6,7 +6,7 @@ import {
   Settings, Palette, Plus, Edit3, Trash2, Save, X, Lock, Eye, EyeOff, Tag
 } from 'lucide-react';
 
-const EMOJI_OPTIONS = ['📁', '🏠', '🚗', '📱', '🎬', '🎵', '💡', '🏥', '🎓', '🛡️', '🍔', '🏋️', '✈️', '👕', '🐾', '💻', '📰', '🎮', '☁️', '📦'];
+const DEFAULT_EMOJIS = ['📁', '🏠', '🚗', '📱', '🎬', '🎵', '💡', '🏥', '🎓', '🛡️', '🍔', '🏋️', '✈️', '👕', '🐾', '💻', '📰', '🎮', '☁️', '📦', '💳', '📞', '🧹', '💊', '🎭', '🏦', '⚡', '💧', '🌐', '🔒'];
 const COLOR_OPTIONS = ['#3b82f6', '#8b5cf6', '#ec4899', '#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#6366f1'];
 
 export default function EinstellungenPage() {
@@ -21,6 +21,7 @@ export default function EinstellungenPage() {
   const [catColor, setCatColor] = useState('#3b82f6');
   const [catIcon, setCatIcon] = useState('📁');
   const [deletingCat, setDeletingCat] = useState(null);
+  const [customEmoji, setCustomEmoji] = useState('');
 
   // Password
   const [showPwForm, setShowPwForm] = useState(false);
@@ -171,7 +172,7 @@ export default function EinstellungenPage() {
                 <div>
                   <label className="block text-xs text-slate-400 mb-1.5">Icon</label>
                   <div className="flex flex-wrap gap-2">
-                    {EMOJI_OPTIONS.map(emoji => (
+                    {DEFAULT_EMOJIS.map(emoji => (
                       <button
                         key={emoji}
                         type="button"
@@ -186,6 +187,34 @@ export default function EinstellungenPage() {
                       </button>
                     ))}
                   </div>
+                  <div className="flex items-center gap-2 mt-3">
+                    <input
+                      type="text"
+                      value={customEmoji}
+                      onChange={e => setCustomEmoji(e.target.value)}
+                      placeholder="Eigenes Emoji eingeben..."
+                      className="flex-1 px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 focus:border-accent-500 outline-none text-sm text-white placeholder-slate-500 transition-colors"
+                      maxLength={4}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (customEmoji.trim()) {
+                          setCatIcon(customEmoji.trim());
+                          setCustomEmoji('');
+                        }
+                      }}
+                      className="px-3 py-2 rounded-lg bg-accent-500/20 text-accent-400 text-sm font-medium hover:bg-accent-500/30 transition-colors"
+                    >
+                      Übernehmen
+                    </button>
+                  </div>
+                  {catIcon && !DEFAULT_EMOJIS.includes(catIcon) && (
+                    <div className="mt-2 flex items-center gap-2 text-sm text-slate-400">
+                      <span>Gewählt:</span>
+                      <span className="text-xl bg-accent-500/30 rounded-lg w-9 h-9 flex items-center justify-center ring-2 ring-accent-500">{catIcon}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div>
