@@ -51,6 +51,7 @@ export default function EingabenPage() {
   const [editCancelId, setEditCancelId] = useState(null);
   const [editCancelDate, setEditCancelDate] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [editHistoryItem, setEditHistoryItem] = useState(null); // { itemId, isIncome, idx, amount, validFrom }
 
   const loadData = async () => {
     if (!user) return;
@@ -175,6 +176,24 @@ export default function EingabenPage() {
     if (isIncome) await updateIncomeSource(user.username, item.id, { amountHistory: updatedHistory });
     else await updateFixedCost(user.username, item.id, { amountHistory: updatedHistory });
     setShowAmountEdit(null); setNewAmount(''); await loadData();
+  };
+
+  const handleEditHistoryEntry = async (item, isIncome, idx, newAmt, newDate) => {
+    const history = [...(item.amountHistory || [])];
+    history[idx] = { amount: parseAmount(newAmt), validFrom: newDate };
+    const sorted = history.sort((a, b) => a.validFrom.localeCompare(b.validFrom));
+    if (isIncome) await updateIncomeSource(user.username, item.id, { amountHistory: sorted });
+    else await updateFixedCost(user.username, item.id, { amountHistory: sorted });
+    setEditHistoryItem(null); await loadData();
+  };
+
+  const handleDeleteHistoryEntry = async (item, isIncome, idx) => {
+    const history = [...(item.amountHistory || [])];
+    if (history.length <= 1) return; // Don't delete the last entry
+    history.splice(idx, 1);
+    if (isIncome) await updateIncomeSource(user.username, item.id, { amountHistory: history });
+    else await updateFixedCost(user.username, item.id, { amountHistory: history });
+    setEditHistoryItem(null); await loadData();
   };
 
   const handleCancel = async (item, isIncome) => {
@@ -344,12 +363,37 @@ export default function EingabenPage() {
                   <div className="glass-light rounded-xl p-4">
                     <p className="text-xs text-slate-400 font-medium mb-2">Betragshistorie</p>
                     <div className="space-y-1.5">
-                      {[...item.amountHistory].sort((a, b) => b.validFrom.localeCompare(a.validFrom)).map((h, idx) => (
-                        <div key={idx} className="flex items-center justify-between text-sm">
-                          <span className="text-slate-500">Ab {h.validFrom}</span>
-                          <span className="text-white font-medium">{fmt(h.amount)}</span>
-                        </div>
-                      ))}
+                      {[...item.amountHistory].sort((a, b) => b.validFrom.localeCompare(a.validFrom)).map((h, idx) => {
+                        const origIdx = item.amountHistory.indexOf(h);
+                        const isEditing = editHistoryItem?.itemId === item.id && editHistoryItem?.idx === origIdx;
+                        if (isEditing) {
+                          return (
+                            <div key={idx} className="flex flex-wrap items-center gap-2 text-sm">
+                              <input type="date" value={editHistoryItem.validFrom} onChange={e => setEditHistoryItem({ ...editHistoryItem, validFrom: e.target.value })}
+                                className="bg-surface-light border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-primary-500" />
+                              <input type="text" inputMode="decimal" value={editHistoryItem.amount} onChange={e => setEditHistoryItem({ ...editHistoryItem, amount: e.target.value })}
+                                className="bg-surface-light border border-slate-700 rounded px-2 py-1 text-xs text-white w-24 focus:outline-none focus:border-primary-500" />
+                              <button onClick={() => handleEditHistoryEntry(item, isIncome, origIdx, editHistoryItem.amount, editHistoryItem.validFrom)}
+                                className="text-green-400 hover:text-green-300 text-xs">✓</button>
+                              <button onClick={() => setEditHistoryItem(null)} className="text-slate-400 hover:text-white text-xs">✕</button>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div key={idx} className="flex items-center justify-between text-sm">
+                            <span className="text-slate-500">Ab {h.validFrom}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-white font-medium">{fmt(h.amount)}</span>
+                              <button onClick={() => setEditHistoryItem({ itemId: item.id, isIncome, idx: origIdx, amount: String(h.amount).replace('.', ','), validFrom: h.validFrom })}
+                                className="text-slate-600 hover:text-white text-xs transition-colors">✏️</button>
+                              {item.amountHistory.length > 1 && (
+                                <button onClick={() => handleDeleteHistoryEntry(item, isIncome, origIdx)}
+                                  className="text-slate-600 hover:text-red-400 text-xs transition-colors">🗑️</button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

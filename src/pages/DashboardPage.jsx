@@ -248,8 +248,8 @@ export default function DashboardPage() {
   relevantCosts.forEach(c => {
     const catId = c.categoryId || 'uncategorized';
     if (!categoryBreakdown[catId]) categoryBreakdown[catId] = { monthly: 0, yearly: 0, count: 0 };
-    categoryBreakdown[catId].monthly += getMonthlyAmount(c);
-    categoryBreakdown[catId].yearly += getYearlyAmount(c);
+    categoryBreakdown[catId].monthly += getEffectiveMonthly(c);
+    categoryBreakdown[catId].yearly += getEffectiveYearly(c);
     categoryBreakdown[catId].count += 1;
   });
 
