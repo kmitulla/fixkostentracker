@@ -64,6 +64,39 @@ export async function deleteFixedCost(username, costId) {
   await deleteDoc(doc(db, 'users', username, 'fixedCosts', costId));
 }
 
+// --- Income Sources ---
+export async function getIncomeSources(username) {
+  const snapshot = await getDocs(
+    query(collection(db, 'users', username, 'incomeSources'), orderBy('name'))
+  );
+  return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function addIncomeSource(username, income) {
+  return await addDoc(collection(db, 'users', username, 'incomeSources'), {
+    name: income.name,
+    paymentDay: income.paymentDay || 1,
+    frequency: income.frequency || 'monthly',
+    frequencyMonths: income.frequencyMonths || 1,
+    startDate: income.startDate || new Date().toISOString().slice(0, 10),
+    cancelledDate: income.cancelledDate || null,
+    notes: income.notes || '',
+    amountHistory: income.amountHistory || [{
+      amount: income.amount || 0,
+      validFrom: income.startDate || new Date().toISOString().slice(0, 10)
+    }],
+    createdAt: new Date().toISOString()
+  });
+}
+
+export async function updateIncomeSource(username, incomeId, updates) {
+  await updateDoc(doc(db, 'users', username, 'incomeSources', incomeId), updates);
+}
+
+export async function deleteIncomeSource(username, incomeId) {
+  await deleteDoc(doc(db, 'users', username, 'incomeSources', incomeId));
+}
+
 // --- Utility functions ---
 export function getCurrentAmount(cost) {
   if (!cost.amountHistory || cost.amountHistory.length === 0) return 0;

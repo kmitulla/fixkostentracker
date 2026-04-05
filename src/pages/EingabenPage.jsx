@@ -1,23 +1,31 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import {
   getFixedCosts, getCategories, addFixedCost, updateFixedCost, deleteFixedCost,
-  getCurrentAmount, getFrequencyLabel, isCostActive
+  getIncomeSources, addIncomeSource, updateIncomeSource, deleteIncomeSource,
+  getCurrentAmount, getFrequencyLabel, isCostActive, getMonthlyAmount
 } from '../lib/firestore';
 import {
-  Plus, Edit3, Trash2, Save, X, Calendar, DollarSign, Tag, Clock,
-  AlertTriangle, History, ChevronDown, ChevronUp
+  Plus, Edit3, Trash2, Save, X, Clock, Search,
+  AlertTriangle, History, ChevronDown, ChevronUp, Wallet, ArrowDownCircle, ArrowUpCircle
 } from 'lucide-react';
 
 export default function EingabenPage() {
   const { user } = useAuth();
   const [costs, setCosts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [incomes, setIncomes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingCost, setEditingCost] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
+  const [activeTab, setActiveTab] = useState('expenses'); // 'expenses' | 'income'
+
+  // Search & filter
+  const [search, setSearch] = useState('');
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
 
   // Form state
   const [form, setForm] = useState({
@@ -27,28 +35,31 @@ export default function EingabenPage() {
     notes: ''
   });
 
-  // For editing amount (adding new amount to history)
+  // Income form state
+  const [showIncomeForm, setShowIncomeForm] = useState(false);
+  const [editingIncome, setEditingIncome] = useState(null);
+  const [incomeForm, setIncomeForm] = useState({
+    name: '', paymentDay: 1, frequency: 'monthly', frequencyMonths: 1,
+    amount: '', startDate: new Date().toISOString().slice(0, 10), notes: ''
+  });
+
   const [showAmountEdit, setShowAmountEdit] = useState(null);
   const [newAmount, setNewAmount] = useState('');
   const [newAmountDate, setNewAmountDate] = useState(new Date().toISOString().slice(0, 10));
-
-  // For cancellation
   const [showCancel, setShowCancel] = useState(null);
   const [cancelDate, setCancelDate] = useState(new Date().toISOString().slice(0, 10));
   const [editCancelId, setEditCancelId] = useState(null);
   const [editCancelDate, setEditCancelDate] = useState('');
-
   const [deleteConfirm, setDeleteConfirm] = useState(null);
 
   const loadData = async () => {
     if (!user) return;
-    const [c, cats] = await Promise.all([
+    const [c, cats, inc] = await Promise.all([
       getFixedCosts(user.username),
-      getCategories(user.username)
+      getCategories(user.username),
+      getIncomeSources(user.username)
     ]);
-    setCosts(c);
-    setCategories(cats);
-    setLoading(false);
+    setCosts(c); setCategories(cats); setIncomes(inc); setLoading(false);
   };
 
   useEffect(() => { loadData(); }, [user]);
@@ -57,43 +68,61 @@ export default function EingabenPage() {
   categories.forEach(cat => { categoryMap[cat.id] = cat; });
   const fmt = (n) => Number(n).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
 
-  const resetForm = () => {
-    setForm({
-      name: '', categoryId: '', paymentDay: 1,
-      frequency: 'monthly', frequencyMonths: 1,
-      amount: '', startDate: new Date().toISOString().slice(0, 10),
-      notes: ''
-    });
-    setEditingCost(null);
-    setShowForm(false);
-  };
-
   const parseAmount = (val) => {
     if (!val && val !== 0) return 0;
-    // Support German comma format: "12,50" -> 12.50
     return parseFloat(String(val).replace(',', '.')) || 0;
+  };
+
+  // Filtered costs
+  const filteredCosts = useMemo(() => {
+    let result = [...costs];
+    if (filterStatus === 'active') result = result.filter(isCostActive);
+    else if (filterStatus === 'cancelled') result = result.filter(c => !isCostActive(c));
+    if (filterCategory !== 'all') result = result.filter(c => c.categoryId === filterCategory);
+    if (search) {
+      const s = search.toLowerCase();
+      result = result.filter(c => {
+        const catName = (categoryMap[c.categoryId]?.name || '').toLowerCase();
+        const amount = String(getCurrentAmount(c)).replace('.', ',');
+        return c.name.toLowerCase().includes(s) || catName.includes(s) || amount.includes(s);
+      });
+    }
+    return result;
+  }, [costs, search, filterCategory, filterStatus]);
+
+  // Filtered incomes
+  const filteredIncomes = useMemo(() => {
+    let result = [...incomes];
+    if (filterStatus === 'active') result = result.filter(isCostActive);
+    else if (filterStatus === 'cancelled') result = result.filter(c => !isCostActive(c));
+    if (search) {
+      const s = search.toLowerCase();
+      result = result.filter(c => {
+        const amount = String(getCurrentAmount(c)).replace('.', ',');
+        return c.name.toLowerCase().includes(s) || amount.includes(s);
+      });
+    }
+    return result;
+  }, [incomes, search, filterStatus]);
+
+  const resetForm = () => {
+    setForm({ name: '', categoryId: '', paymentDay: 1, frequency: 'monthly', frequencyMonths: 1, amount: '', startDate: new Date().toISOString().slice(0, 10), notes: '' });
+    setEditingCost(null); setShowForm(false);
+  };
+  const resetIncomeForm = () => {
+    setIncomeForm({ name: '', paymentDay: 1, frequency: 'monthly', frequencyMonths: 1, amount: '', startDate: new Date().toISOString().slice(0, 10), notes: '' });
+    setEditingIncome(null); setShowIncomeForm(false);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.name.trim()) return;
-
     if (editingCost) {
-      // Update amount history if start amount changed
-      const updates = {
-        name: form.name,
-        categoryId: form.categoryId,
-        paymentDay: parseInt(form.paymentDay) || 1,
-        frequency: form.frequency,
-        frequencyMonths: parseInt(form.frequencyMonths) || 1,
-        startDate: form.startDate,
-        notes: form.notes
-      };
+      const updates = { name: form.name, categoryId: form.categoryId, paymentDay: parseInt(form.paymentDay) || 1, frequency: form.frequency, frequencyMonths: parseInt(form.frequencyMonths) || 1, startDate: form.startDate, notes: form.notes };
       if (form.amount !== '' && form.amount !== undefined) {
         const newAmt = parseAmount(form.amount);
         const history = editingCost.amountHistory || [];
         if (history.length > 0) {
-          // Update the first (start) entry
           const sorted = [...history].sort((a, b) => a.validFrom.localeCompare(b.validFrom));
           sorted[0] = { ...sorted[0], amount: newAmt };
           updates.amountHistory = sorted;
@@ -103,549 +132,418 @@ export default function EingabenPage() {
       }
       await updateFixedCost(user.username, editingCost.id, updates);
     } else {
-      await addFixedCost(user.username, {
-        name: form.name,
-        categoryId: form.categoryId,
-        paymentDay: parseInt(form.paymentDay) || 1,
-        frequency: form.frequency,
-        frequencyMonths: parseInt(form.frequencyMonths) || 1,
-        amount: parseAmount(form.amount),
-        startDate: form.startDate,
-        notes: form.notes
-      });
+      await addFixedCost(user.username, { name: form.name, categoryId: form.categoryId, paymentDay: parseInt(form.paymentDay) || 1, frequency: form.frequency, frequencyMonths: parseInt(form.frequencyMonths) || 1, amount: parseAmount(form.amount), startDate: form.startDate, notes: form.notes });
     }
+    resetForm(); await loadData();
+  };
 
-    resetForm();
-    await loadData();
+  const handleIncomeSubmit = async (e) => {
+    e.preventDefault();
+    if (!incomeForm.name.trim()) return;
+    if (editingIncome) {
+      const updates = { name: incomeForm.name, paymentDay: parseInt(incomeForm.paymentDay) || 1, frequency: incomeForm.frequency, frequencyMonths: parseInt(incomeForm.frequencyMonths) || 1, startDate: incomeForm.startDate, notes: incomeForm.notes };
+      if (incomeForm.amount !== '' && incomeForm.amount !== undefined) {
+        const newAmt = parseAmount(incomeForm.amount);
+        const history = editingIncome.amountHistory || [];
+        if (history.length > 0) {
+          const sorted = [...history].sort((a, b) => a.validFrom.localeCompare(b.validFrom));
+          sorted[0] = { ...sorted[0], amount: newAmt };
+          updates.amountHistory = sorted;
+        } else {
+          updates.amountHistory = [{ amount: newAmt, validFrom: incomeForm.startDate }];
+        }
+      }
+      await updateIncomeSource(user.username, editingIncome.id, updates);
+    } else {
+      await addIncomeSource(user.username, { name: incomeForm.name, paymentDay: parseInt(incomeForm.paymentDay) || 1, frequency: incomeForm.frequency, frequencyMonths: parseInt(incomeForm.frequencyMonths) || 1, amount: parseAmount(incomeForm.amount), startDate: incomeForm.startDate, notes: incomeForm.notes });
+    }
+    resetIncomeForm(); await loadData();
   };
 
   const handleEdit = (cost) => {
-    setForm({
-      name: cost.name,
-      categoryId: cost.categoryId || '',
-      paymentDay: cost.paymentDay || 1,
-      frequency: cost.frequency || 'monthly',
-      frequencyMonths: cost.frequencyMonths || 1,
-      amount: String(getCurrentAmount(cost)).replace('.', ','),
-      startDate: cost.startDate || '',
-      notes: cost.notes || ''
-    });
-    setEditingCost(cost);
-    setShowForm(true);
+    setForm({ name: cost.name, categoryId: cost.categoryId || '', paymentDay: cost.paymentDay || 1, frequency: cost.frequency || 'monthly', frequencyMonths: cost.frequencyMonths || 1, amount: String(getCurrentAmount(cost)).replace('.', ','), startDate: cost.startDate || '', notes: cost.notes || '' });
+    setEditingCost(cost); setShowForm(true);
+  };
+  const handleEditIncome = (inc) => {
+    setIncomeForm({ name: inc.name, paymentDay: inc.paymentDay || 1, frequency: inc.frequency || 'monthly', frequencyMonths: inc.frequencyMonths || 1, amount: String(getCurrentAmount(inc)).replace('.', ','), startDate: inc.startDate || '', notes: inc.notes || '' });
+    setEditingIncome(inc); setShowIncomeForm(true);
   };
 
-  const handleUpdateAmount = async (cost) => {
+  const handleUpdateAmount = async (item, isIncome) => {
     if (!newAmount && newAmount !== 0) return;
-    const updatedHistory = [
-      ...(cost.amountHistory || []),
-      { amount: parseAmount(newAmount), validFrom: newAmountDate }
-    ];
-    await updateFixedCost(user.username, cost.id, { amountHistory: updatedHistory });
-    setShowAmountEdit(null);
-    setNewAmount('');
+    const updatedHistory = [...(item.amountHistory || []), { amount: parseAmount(newAmount), validFrom: newAmountDate }];
+    if (isIncome) await updateIncomeSource(user.username, item.id, { amountHistory: updatedHistory });
+    else await updateFixedCost(user.username, item.id, { amountHistory: updatedHistory });
+    setShowAmountEdit(null); setNewAmount(''); await loadData();
+  };
+
+  const handleCancel = async (item, isIncome) => {
+    if (isIncome) await updateIncomeSource(user.username, item.id, { cancelledDate: cancelDate });
+    else await updateFixedCost(user.username, item.id, { cancelledDate: cancelDate });
+    setShowCancel(null); await loadData();
+  };
+
+  const handleReactivate = async (item, isIncome) => {
+    if (isIncome) await updateIncomeSource(user.username, item.id, { cancelledDate: null });
+    else await updateFixedCost(user.username, item.id, { cancelledDate: null });
     await loadData();
   };
 
-  const handleCancel = async (cost) => {
-    await updateFixedCost(user.username, cost.id, { cancelledDate: cancelDate });
-    setShowCancel(null);
-    await loadData();
+  const handleDelete = async (itemId, isIncome) => {
+    if (isIncome) await deleteIncomeSource(user.username, itemId);
+    else await deleteFixedCost(user.username, itemId);
+    setDeleteConfirm(null); await loadData();
   };
 
-  const handleReactivate = async (cost) => {
-    await updateFixedCost(user.username, cost.id, { cancelledDate: null });
-    await loadData();
+  const renderItem = (item, i, isIncome) => {
+    const cat = isIncome ? null : categoryMap[item.categoryId];
+    const active = isCostActive(item);
+    const expanded = expandedId === item.id;
+    const itemKey = `${isIncome ? 'inc' : 'exp'}-${item.id}`;
+
+    return (
+      <motion.div key={itemKey} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
+        className={`glass rounded-2xl overflow-hidden ${!active ? 'opacity-60' : ''}`}>
+        <div onClick={() => setExpandedId(expanded ? null : item.id)}
+          className="flex items-center justify-between p-4 cursor-pointer hover:bg-surface-lighter/20 transition-colors">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="text-xl shrink-0">{isIncome ? '💵' : (cat?.icon || '📌')}</span>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="font-medium text-white">{item.name}</p>
+                {!active && item.cancelledDate && (
+                  <span className="inline-flex items-center text-[10px] bg-red-500/15 text-red-400 px-2 py-0.5 rounded-full border border-red-500/20">
+                    Beendet seit {new Date(item.cancelledDate).toLocaleDateString('de-DE')}
+                  </span>
+                )}
+                {active && item.cancelledDate && new Date(item.cancelledDate) > new Date() && (
+                  <span className="inline-flex items-center text-[10px] bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/20">
+                    Endet am {new Date(item.cancelledDate).toLocaleDateString('de-DE')}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500">
+                {!isIncome && (cat?.name || 'Ohne Kategorie')} {!isIncome && '· '}{getFrequencyLabel(item)} · Tag {item.paymentDay}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 shrink-0">
+            <span className={`text-lg font-bold ${isIncome ? 'text-green-400' : 'text-white'}`}>{fmt(getCurrentAmount(item))}</span>
+            {expanded ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+          </div>
+        </div>
+
+        <AnimatePresence>
+          {expanded && (
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3 }} className="overflow-hidden">
+              <div className="px-4 pb-4 space-y-3 border-t border-slate-700/30 pt-3">
+                <div className="flex flex-wrap gap-2">
+                  <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                    onClick={() => isIncome ? handleEditIncome(item) : handleEdit(item)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500/15 text-primary-400 text-xs font-medium hover:bg-primary-500/25 transition-colors">
+                    <Edit3 className="w-3.5 h-3.5" /> Bearbeiten
+                  </motion.button>
+                  <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                    onClick={() => { setShowAmountEdit(item.id); setNewAmount(''); setNewAmountDate(new Date().toISOString().slice(0, 10)); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-500/15 text-accent-400 text-xs font-medium hover:bg-accent-500/25 transition-colors">
+                    <History className="w-3.5 h-3.5" /> Betrag anpassen
+                  </motion.button>
+                  {!item.cancelledDate ? (
+                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                      onClick={() => { setShowCancel(item.id); setCancelDate(new Date().toISOString().slice(0, 10)); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors">
+                      <Clock className="w-3.5 h-3.5" /> {isIncome ? 'Beenden' : 'Kündigen'}
+                    </motion.button>
+                  ) : (
+                    <>
+                      <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                        onClick={() => { setEditCancelId(item.id); setEditCancelDate(item.cancelledDate); }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors">
+                        <Edit3 className="w-3.5 h-3.5" /> Datum bearbeiten
+                      </motion.button>
+                      <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                        onClick={() => handleReactivate(item, isIncome)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500/15 text-green-400 text-xs font-medium hover:bg-green-500/25 transition-colors">
+                        Reaktivieren
+                      </motion.button>
+                    </>
+                  )}
+                  <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                    onClick={() => setDeleteConfirm(item.id)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/15 text-red-400 text-xs font-medium hover:bg-red-500/25 transition-colors">
+                    <Trash2 className="w-3.5 h-3.5" /> Löschen
+                  </motion.button>
+                </div>
+
+                {/* Amount edit */}
+                <AnimatePresence>
+                  {showAmountEdit === item.id && (
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="glass-light rounded-xl p-4 space-y-3 overflow-hidden">
+                      <p className="text-sm text-slate-300 font-medium">Neuen Betrag hinzufügen</p>
+                      <div className="flex flex-wrap gap-3">
+                        <input type="text" inputMode="decimal" value={newAmount} onChange={e => setNewAmount(e.target.value)} placeholder="z.B. 12,50"
+                          className="flex-1 min-w-[120px] px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 text-sm text-white outline-none" />
+                        <input type="date" value={newAmountDate} onChange={e => setNewAmountDate(e.target.value)}
+                          className="px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 text-sm text-white outline-none" />
+                        <button onClick={() => handleUpdateAmount(item, isIncome)} className="px-4 py-2 rounded-lg bg-accent-600 text-white text-sm font-medium hover:bg-accent-500 transition-colors">Speichern</button>
+                        <button onClick={() => setShowAmountEdit(null)} className="px-4 py-2 rounded-lg text-slate-400 text-sm hover:text-white transition-colors">Abbrechen</button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Cancel form */}
+                <AnimatePresence>
+                  {showCancel === item.id && (
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="glass-light rounded-xl p-4 space-y-3 overflow-hidden">
+                      <p className="text-sm text-amber-300 font-medium">{isIncome ? 'Enddatum eintragen' : 'Kündigung eintragen'}</p>
+                      <div className="flex flex-wrap gap-3">
+                        <input type="date" value={cancelDate} onChange={e => setCancelDate(e.target.value)}
+                          className="px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 text-sm text-white outline-none" />
+                        <button onClick={() => handleCancel(item, isIncome)} className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 transition-colors">Speichern</button>
+                        <button onClick={() => setShowCancel(null)} className="px-4 py-2 rounded-lg text-slate-400 text-sm hover:text-white transition-colors">Abbrechen</button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Edit cancel date */}
+                <AnimatePresence>
+                  {editCancelId === item.id && (
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="glass-light rounded-xl p-4 space-y-3 overflow-hidden">
+                      <p className="text-sm text-amber-300 font-medium">Datum bearbeiten</p>
+                      <div className="flex flex-wrap gap-3">
+                        <input type="date" value={editCancelDate} onChange={e => setEditCancelDate(e.target.value)}
+                          className="px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 text-sm text-white outline-none" />
+                        <button onClick={async () => {
+                          if (isIncome) await updateIncomeSource(user.username, item.id, { cancelledDate: editCancelDate });
+                          else await updateFixedCost(user.username, item.id, { cancelledDate: editCancelDate });
+                          setEditCancelId(null); await loadData();
+                        }} className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 transition-colors">Speichern</button>
+                        <button onClick={() => setEditCancelId(null)} className="px-4 py-2 rounded-lg text-slate-400 text-sm hover:text-white transition-colors">Abbrechen</button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Delete confirm */}
+                <AnimatePresence>
+                  {deleteConfirm === item.id && (
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="glass-light rounded-xl p-4 space-y-3 overflow-hidden border border-red-500/20">
+                      <p className="text-sm text-red-400 font-medium">Wirklich löschen?</p>
+                      <div className="flex gap-3">
+                        <button onClick={() => handleDelete(item.id, isIncome)} className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-500">Endgültig löschen</button>
+                        <button onClick={() => setDeleteConfirm(null)} className="px-4 py-2 rounded-lg text-slate-400 text-sm hover:text-white">Abbrechen</button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Amount history */}
+                {item.amountHistory?.length > 0 && (
+                  <div className="glass-light rounded-xl p-4">
+                    <p className="text-xs text-slate-400 font-medium mb-2">Betragshistorie</p>
+                    <div className="space-y-1.5">
+                      {[...item.amountHistory].sort((a, b) => b.validFrom.localeCompare(a.validFrom)).map((h, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-sm">
+                          <span className="text-slate-500">Ab {h.validFrom}</span>
+                          <span className="text-white font-medium">{fmt(h.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    );
   };
 
-  const handleDelete = async (costId) => {
-    await deleteFixedCost(user.username, costId);
-    setDeleteConfirm(null);
-    await loadData();
+  const renderForm = (isIncome) => {
+    const f = isIncome ? incomeForm : form;
+    const setF = isIncome ? setIncomeForm : (v) => setForm(v);
+    const editing = isIncome ? editingIncome : editingCost;
+    const onSubmit = isIncome ? handleIncomeSubmit : handleSubmit;
+    const onReset = isIncome ? resetIncomeForm : resetForm;
+
+    return (
+      <form onSubmit={onSubmit} className="glass rounded-2xl p-6 space-y-4">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold text-white">
+            {editing ? (isIncome ? 'Einnahme bearbeiten' : 'Fixkosten bearbeiten') : (isIncome ? 'Neue Einnahme' : 'Neue Fixkosten')}
+          </h2>
+          <button type="button" onClick={onReset} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm text-slate-400 mb-1.5">Name *</label>
+            <input type="text" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder={isIncome ? 'z.B. Gehalt, Freelance...' : 'z.B. Netflix, Miete...'}
+              className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white placeholder-slate-500 transition-colors" required />
+          </div>
+          {!isIncome && (
+            <div>
+              <label className="block text-sm text-slate-400 mb-1.5">Kategorie</label>
+              <select value={f.categoryId} onChange={e => setF({ ...f, categoryId: e.target.value })}
+                className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 text-sm text-white outline-none cursor-pointer">
+                <option value="">Ohne Kategorie</option>
+                {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>)}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="block text-sm text-slate-400 mb-1.5">{editing ? 'Startbetrag (EUR)' : 'Betrag (EUR) *'}</label>
+            <input type="text" inputMode="decimal" value={f.amount} onChange={e => setF({ ...f, amount: e.target.value })} placeholder="0,00"
+              className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white placeholder-slate-500 transition-colors" required={!editing} />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-400 mb-1.5">Zahltag</label>
+            <input type="number" inputMode="numeric" min="1" max="31" value={f.paymentDay} onChange={e => setF({ ...f, paymentDay: e.target.value })}
+              className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white transition-colors" />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-400 mb-1.5">Zahlungsrhythmus</label>
+            <select value={f.frequency} onChange={e => setF({ ...f, frequency: e.target.value })}
+              className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 text-sm text-white outline-none cursor-pointer">
+              <option value="monthly">Monatlich</option>
+              <option value="yearly">Jährlich</option>
+              <option value="custom">Benutzerdefiniert</option>
+            </select>
+          </div>
+          {f.frequency === 'custom' && (
+            <div>
+              <label className="block text-sm text-slate-400 mb-1.5">Alle X Monate</label>
+              <input type="number" inputMode="numeric" min="1" value={f.frequencyMonths} onChange={e => setF({ ...f, frequencyMonths: e.target.value })}
+                className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white transition-colors" />
+            </div>
+          )}
+          <div>
+            <label className="block text-sm text-slate-400 mb-1.5">Startdatum</label>
+            <input type="date" value={f.startDate} onChange={e => setF({ ...f, startDate: e.target.value })}
+              className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white transition-colors" />
+          </div>
+          <div className={isIncome ? '' : 'md:col-span-2'}>
+            <label className="block text-sm text-slate-400 mb-1.5">Notizen</label>
+            <textarea value={f.notes} onChange={e => setF({ ...f, notes: e.target.value })} placeholder="Optionale Notizen..." rows={2}
+              className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white placeholder-slate-500 transition-colors resize-none" />
+          </div>
+        </div>
+        <div className="flex gap-3 pt-2">
+          <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} type="submit"
+            className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-primary-600 to-accent-600 text-white text-sm font-semibold shadow-lg shadow-primary-500/20 transition-all">
+            <Save className="w-4 h-4" /> {editing ? 'Speichern' : 'Hinzufügen'}
+          </motion.button>
+          <button type="button" onClick={onReset} className="px-6 py-2.5 rounded-xl text-sm text-slate-400 hover:text-white hover:bg-surface-lighter/50 transition-all">Abbrechen</button>
+        </div>
+      </form>
+    );
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-          className="w-10 h-10 border-3 border-primary-500/30 border-t-primary-500 rounded-full"
-        />
+        <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+          className="w-10 h-10 border-3 border-primary-500/30 border-t-primary-500 rounded-full" />
       </div>
     );
   }
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-      <div className="flex items-center justify-between">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
+      {/* Header with tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-white">Eingaben</h1>
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={() => { resetForm(); setShowForm(true); }}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-primary-600 to-accent-600 text-white text-sm font-semibold shadow-lg shadow-primary-500/20 hover:shadow-primary-500/40 transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          Neue Fixkosten
-        </motion.button>
+        <div className="flex items-center gap-2">
+          {activeTab === 'expenses' ? (
+            <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+              onClick={() => { resetForm(); setShowForm(true); }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-primary-600 to-accent-600 text-white text-sm font-semibold shadow-lg shadow-primary-500/20 transition-all">
+              <Plus className="w-4 h-4" /> Neue Fixkosten
+            </motion.button>
+          ) : (
+            <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+              onClick={() => { resetIncomeForm(); setShowIncomeForm(true); }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-green-600 to-emerald-600 text-white text-sm font-semibold shadow-lg shadow-green-500/20 transition-all">
+              <Plus className="w-4 h-4" /> Neue Einnahme
+            </motion.button>
+          )}
+        </div>
       </div>
 
-      {categories.length === 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="glass rounded-xl p-4 flex items-center gap-3 border-amber-500/30 bg-amber-500/5"
-        >
+      {/* Tab toggle */}
+      <div className="flex rounded-xl overflow-hidden border border-slate-700 w-fit">
+        <button onClick={() => setActiveTab('expenses')}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${activeTab === 'expenses' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+          <ArrowUpCircle className="w-4 h-4" /> Ausgaben ({costs.length})
+        </button>
+        <button onClick={() => setActiveTab('income')}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors ${activeTab === 'income' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+          <ArrowDownCircle className="w-4 h-4" /> Einnahmen ({incomes.length})
+        </button>
+      </div>
+
+      {/* Search & Filters */}
+      <div className="glass rounded-xl p-3">
+        <div className="flex flex-wrap gap-2.5 items-center">
+          <div className="relative flex-1 min-w-[180px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, Betrag, Kategorie..."
+              className="w-full pl-10 pr-4 py-2 rounded-lg bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white placeholder-slate-500 transition-colors" />
+          </div>
+          {activeTab === 'expenses' && (
+            <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}
+              className="px-3 py-2 rounded-lg bg-surface-light/80 border border-slate-700 text-sm text-white outline-none cursor-pointer">
+              <option value="all">Alle Kategorien</option>
+              {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>)}
+            </select>
+          )}
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+            className="px-3 py-2 rounded-lg bg-surface-light/80 border border-slate-700 text-sm text-white outline-none cursor-pointer">
+            <option value="all">Alle</option>
+            <option value="active">Aktiv</option>
+            <option value="cancelled">{activeTab === 'income' ? 'Beendet' : 'Gekündigt'}</option>
+          </select>
+        </div>
+      </div>
+
+      {categories.length === 0 && activeTab === 'expenses' && (
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+          className="glass rounded-xl p-4 flex items-center gap-3 border-amber-500/30 bg-amber-500/5">
           <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
-          <p className="text-sm text-amber-300">
-            Erstelle zuerst Kategorien unter <span className="font-medium">Einstellungen</span>, um deine Fixkosten zu organisieren.
-          </p>
+          <p className="text-sm text-amber-300">Erstelle zuerst Kategorien unter <span className="font-medium">Einstellungen</span>.</p>
         </motion.div>
       )}
 
       {/* Form */}
       <AnimatePresence>
-        {showForm && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden"
-          >
-            <form onSubmit={handleSubmit} className="glass rounded-2xl p-6 space-y-4">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-lg font-semibold text-white">
-                  {editingCost ? 'Fixkosten bearbeiten' : 'Neue Fixkosten hinzufügen'}
-                </h2>
-                <button type="button" onClick={resetForm} className="text-slate-400 hover:text-white transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Name */}
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1.5">Name *</label>
-                  <input
-                    type="text"
-                    value={form.name}
-                    onChange={e => setForm({ ...form, name: e.target.value })}
-                    placeholder="z.B. Netflix, Miete..."
-                    className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white placeholder-slate-500 transition-colors"
-                    required
-                  />
-                </div>
-
-                {/* Category */}
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1.5">Kategorie</label>
-                  <select
-                    value={form.categoryId}
-                    onChange={e => setForm({ ...form, categoryId: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 text-sm text-white outline-none cursor-pointer"
-                  >
-                    <option value="">Ohne Kategorie</option>
-                    {categories.map(cat => (
-                      <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Amount */}
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1.5">
-                    {editingCost ? 'Startbetrag (EUR)' : 'Betrag (EUR) *'}
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={form.amount}
-                    onChange={e => setForm({ ...form, amount: e.target.value })}
-                    placeholder="0,00"
-                    className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white placeholder-slate-500 transition-colors"
-                    required={!editingCost}
-                  />
-                </div>
-
-                {/* Payment day */}
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1.5">Zahltag (Tag im Monat)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="31"
-                    value={form.paymentDay}
-                    onChange={e => setForm({ ...form, paymentDay: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white transition-colors"
-                  />
-                </div>
-
-                {/* Frequency */}
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1.5">Zahlungsrhythmus</label>
-                  <select
-                    value={form.frequency}
-                    onChange={e => setForm({ ...form, frequency: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 text-sm text-white outline-none cursor-pointer"
-                  >
-                    <option value="monthly">Monatlich</option>
-                    <option value="yearly">Jährlich</option>
-                    <option value="custom">Benutzerdefiniert</option>
-                  </select>
-                </div>
-
-                {form.frequency === 'custom' && (
-                  <div>
-                    <label className="block text-sm text-slate-400 mb-1.5">Alle X Monate</label>
-                    <input
-                      type="number"
-                      min="1"
-                      value={form.frequencyMonths}
-                      onChange={e => setForm({ ...form, frequencyMonths: e.target.value })}
-                      className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white transition-colors"
-                    />
-                  </div>
-                )}
-
-                {/* Start date */}
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1.5">Startdatum</label>
-                  <input
-                    type="date"
-                    value={form.startDate}
-                    onChange={e => setForm({ ...form, startDate: e.target.value })}
-                    className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white transition-colors"
-                  />
-                </div>
-
-                {/* Notes */}
-                <div className="md:col-span-2">
-                  <label className="block text-sm text-slate-400 mb-1.5">Notizen</label>
-                  <textarea
-                    value={form.notes}
-                    onChange={e => setForm({ ...form, notes: e.target.value })}
-                    placeholder="Optionale Notizen..."
-                    rows={2}
-                    className="w-full px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white placeholder-slate-500 transition-colors resize-none"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  type="submit"
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-primary-600 to-accent-600 text-white text-sm font-semibold shadow-lg shadow-primary-500/20 transition-all"
-                >
-                  <Save className="w-4 h-4" />
-                  {editingCost ? 'Speichern' : 'Hinzufügen'}
-                </motion.button>
-                <button
-                  type="button"
-                  onClick={resetForm}
-                  className="px-6 py-2.5 rounded-xl text-sm text-slate-400 hover:text-white hover:bg-surface-lighter/50 transition-all"
-                >
-                  Abbrechen
-                </button>
-              </div>
-            </form>
+        {activeTab === 'expenses' && showForm && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+            {renderForm(false)}
+          </motion.div>
+        )}
+        {activeTab === 'income' && showIncomeForm && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+            {renderForm(true)}
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Costs list */}
+      {/* List */}
       <div className="space-y-3">
-        {costs.length === 0 && !showForm ? (
-          <div className="glass rounded-2xl p-12 text-center">
-            <motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 2, repeat: Infinity }} className="text-5xl mb-4">
-              💰
-            </motion.div>
-            <p className="text-slate-400">Noch keine Fixkosten erfasst. Klicke auf "Neue Fixkosten" um zu beginnen.</p>
-          </div>
+        {activeTab === 'expenses' ? (
+          filteredCosts.length === 0 ? (
+            <div className="glass rounded-2xl p-12 text-center">
+              <p className="text-slate-400">{search || filterCategory !== 'all' || filterStatus !== 'all' ? 'Keine Einträge gefunden.' : 'Noch keine Fixkosten erfasst.'}</p>
+            </div>
+          ) : filteredCosts.map((c, i) => renderItem(c, i, false))
         ) : (
-          costs.map((cost, i) => {
-            const cat = categoryMap[cost.categoryId];
-            const active = isCostActive(cost);
-            const expanded = expandedId === cost.id;
-
-            return (
-              <motion.div
-                key={cost.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                className={`glass rounded-2xl overflow-hidden ${!active ? 'opacity-60' : ''}`}
-              >
-                <div
-                  onClick={() => setExpandedId(expanded ? null : cost.id)}
-                  className="flex items-center justify-between p-4 cursor-pointer hover:bg-surface-lighter/20 transition-colors"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="text-xl shrink-0">{cat?.icon || '📌'}</span>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-medium text-white">{cost.name}</p>
-                        {!active && cost.cancelledDate && (
-                          <span className="inline-flex items-center gap-1 text-[10px] bg-red-500/15 text-red-400 px-2 py-0.5 rounded-full border border-red-500/20">
-                            Gekündigt seit {new Date(cost.cancelledDate).toLocaleDateString('de-DE')}
-                          </span>
-                        )}
-                        {active && cost.cancelledDate && new Date(cost.cancelledDate) > new Date() && (
-                          <span className="inline-flex items-center gap-1 text-[10px] bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/20">
-                            Kündigung zum {new Date(cost.cancelledDate).toLocaleDateString('de-DE')}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        {cat?.name || 'Ohne Kategorie'} · {getFrequencyLabel(cost)} · Tag {cost.paymentDay}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 shrink-0">
-                    <span className="text-lg font-bold text-white">{fmt(getCurrentAmount(cost))}</span>
-                    {expanded ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
-                  </div>
-                </div>
-
-                <AnimatePresence>
-                  {expanded && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.3 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="px-4 pb-4 space-y-3 border-t border-slate-700/30 pt-3">
-                        {/* Action buttons */}
-                        <div className="flex flex-wrap gap-2">
-                          <motion.button
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
-                            onClick={() => handleEdit(cost)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500/15 text-primary-400 text-xs font-medium hover:bg-primary-500/25 transition-colors"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" /> Bearbeiten
-                          </motion.button>
-                          <motion.button
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
-                            onClick={() => { setShowAmountEdit(cost.id); setNewAmount(''); setNewAmountDate(new Date().toISOString().slice(0, 10)); }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-500/15 text-accent-400 text-xs font-medium hover:bg-accent-500/25 transition-colors"
-                          >
-                            <History className="w-3.5 h-3.5" /> Betrag anpassen
-                          </motion.button>
-                          {!cost.cancelledDate ? (
-                            <motion.button
-                              whileHover={{ scale: 1.05 }}
-                              whileTap={{ scale: 0.95 }}
-                              onClick={() => { setShowCancel(cost.id); setCancelDate(new Date().toISOString().slice(0, 10)); }}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors"
-                            >
-                              <Clock className="w-3.5 h-3.5" /> Kündigen
-                            </motion.button>
-                          ) : (
-                            <>
-                              <motion.button
-                                whileHover={{ scale: 1.05 }}
-                                whileTap={{ scale: 0.95 }}
-                                onClick={() => { setEditCancelId(cost.id); setEditCancelDate(cost.cancelledDate); }}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors"
-                              >
-                                <Edit3 className="w-3.5 h-3.5" /> Kündigung bearbeiten
-                              </motion.button>
-                              <motion.button
-                                whileHover={{ scale: 1.05 }}
-                                whileTap={{ scale: 0.95 }}
-                                onClick={() => handleReactivate(cost)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500/15 text-green-400 text-xs font-medium hover:bg-green-500/25 transition-colors"
-                              >
-                                Kündigung aufheben
-                              </motion.button>
-                            </>
-                          )}
-                          <motion.button
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
-                            onClick={() => setDeleteConfirm(cost.id)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/15 text-red-400 text-xs font-medium hover:bg-red-500/25 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" /> Löschen
-                          </motion.button>
-                        </div>
-
-                        {/* Amount update form */}
-                        <AnimatePresence>
-                          {showAmountEdit === cost.id && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="glass-light rounded-xl p-4 space-y-3 overflow-hidden"
-                            >
-                              <p className="text-sm text-slate-300 font-medium">Neuen Betrag hinzufügen</p>
-                              <p className="text-xs text-slate-500">Der alte Betrag bleibt in der Historie erhalten.</p>
-                              <div className="flex flex-wrap gap-3">
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  value={newAmount}
-                                  onChange={e => setNewAmount(e.target.value)}
-                                  placeholder="Neuer Betrag (z.B. 12,50)"
-                                  className="flex-1 min-w-[120px] px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 text-sm text-white outline-none"
-                                />
-                                <input
-                                  type="date"
-                                  value={newAmountDate}
-                                  onChange={e => setNewAmountDate(e.target.value)}
-                                  className="px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 text-sm text-white outline-none"
-                                />
-                                <button
-                                  onClick={() => handleUpdateAmount(cost)}
-                                  className="px-4 py-2 rounded-lg bg-accent-600 text-white text-sm font-medium hover:bg-accent-500 transition-colors"
-                                >
-                                  Speichern
-                                </button>
-                                <button
-                                  onClick={() => setShowAmountEdit(null)}
-                                  className="px-4 py-2 rounded-lg text-slate-400 text-sm hover:text-white transition-colors"
-                                >
-                                  Abbrechen
-                                </button>
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-
-                        {/* Cancel form */}
-                        <AnimatePresence>
-                          {showCancel === cost.id && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="glass-light rounded-xl p-4 space-y-3 overflow-hidden"
-                            >
-                              <p className="text-sm text-amber-300 font-medium">Kündigung eintragen</p>
-                              <p className="text-xs text-slate-500">Ab diesem Datum wird der Posten nicht mehr eingerechnet.</p>
-                              <div className="flex flex-wrap gap-3">
-                                <input
-                                  type="date"
-                                  value={cancelDate}
-                                  onChange={e => setCancelDate(e.target.value)}
-                                  className="px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 text-sm text-white outline-none"
-                                />
-                                <button
-                                  onClick={() => handleCancel(cost)}
-                                  className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 transition-colors"
-                                >
-                                  Kündigen
-                                </button>
-                                <button
-                                  onClick={() => setShowCancel(null)}
-                                  className="px-4 py-2 rounded-lg text-slate-400 text-sm hover:text-white transition-colors"
-                                >
-                                  Abbrechen
-                                </button>
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-
-                        {/* Edit cancellation date */}
-                        <AnimatePresence>
-                          {editCancelId === cost.id && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="glass-light rounded-xl p-4 space-y-3 overflow-hidden"
-                            >
-                              <p className="text-sm text-amber-300 font-medium">Kündigungsdatum bearbeiten</p>
-                              <p className="text-xs text-slate-500">
-                                Aktuell: {cost.cancelledDate ? new Date(cost.cancelledDate).toLocaleDateString('de-DE') : '–'}
-                              </p>
-                              <div className="flex flex-wrap gap-3">
-                                <input
-                                  type="date"
-                                  value={editCancelDate}
-                                  onChange={e => setEditCancelDate(e.target.value)}
-                                  className="px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 text-sm text-white outline-none"
-                                />
-                                <button
-                                  onClick={async () => {
-                                    await updateFixedCost(user.username, cost.id, { cancelledDate: editCancelDate });
-                                    setEditCancelId(null);
-                                    await loadData();
-                                  }}
-                                  className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 transition-colors"
-                                >
-                                  Speichern
-                                </button>
-                                <button
-                                  onClick={() => setEditCancelId(null)}
-                                  className="px-4 py-2 rounded-lg text-slate-400 text-sm hover:text-white transition-colors"
-                                >
-                                  Abbrechen
-                                </button>
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-
-                        {/* Delete confirmation */}
-                        <AnimatePresence>
-                          {deleteConfirm === cost.id && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="glass-light rounded-xl p-4 space-y-3 overflow-hidden border border-red-500/20"
-                            >
-                              <p className="text-sm text-red-400 font-medium">Wirklich löschen?</p>
-                              <p className="text-xs text-slate-400">Diese Aktion kann nicht rückgängig gemacht werden.</p>
-                              <div className="flex gap-3">
-                                <button
-                                  onClick={() => handleDelete(cost.id)}
-                                  className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-500 transition-colors"
-                                >
-                                  Endgültig löschen
-                                </button>
-                                <button
-                                  onClick={() => setDeleteConfirm(null)}
-                                  className="px-4 py-2 rounded-lg text-slate-400 text-sm hover:text-white transition-colors"
-                                >
-                                  Abbrechen
-                                </button>
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-
-                        {/* Amount history */}
-                        {cost.amountHistory && cost.amountHistory.length > 0 && (
-                          <div className="glass-light rounded-xl p-4">
-                            <p className="text-xs text-slate-400 font-medium mb-2">Betragshistorie</p>
-                            <div className="space-y-1.5">
-                              {[...cost.amountHistory]
-                                .sort((a, b) => b.validFrom.localeCompare(a.validFrom))
-                                .map((h, idx) => (
-                                  <div key={idx} className="flex items-center justify-between text-sm">
-                                    <span className="text-slate-500">Ab {h.validFrom}</span>
-                                    <span className="text-white font-medium">{fmt(h.amount)}</span>
-                                  </div>
-                                ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </motion.div>
-            );
-          })
+          filteredIncomes.length === 0 ? (
+            <div className="glass rounded-2xl p-12 text-center">
+              <motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 2, repeat: Infinity }} className="text-5xl mb-4">💵</motion.div>
+              <p className="text-slate-400">{search || filterStatus !== 'all' ? 'Keine Einträge gefunden.' : 'Noch keine Einnahmen erfasst.'}</p>
+            </div>
+          ) : filteredIncomes.map((inc, i) => renderItem(inc, i, true))
         )}
       </div>
     </motion.div>
