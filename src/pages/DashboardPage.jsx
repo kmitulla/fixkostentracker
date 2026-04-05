@@ -169,8 +169,30 @@ export default function DashboardPage() {
     });
   }, [costs, viewMode]);
 
-  const totalMonthly = relevantCosts.reduce((sum, c) => sum + getMonthlyAmount(c), 0);
-  const totalYearly = relevantCosts.reduce((sum, c) => sum + getYearlyAmount(c), 0);
+  // For "after-cancel" mode, use the latest/newest amount entry instead of today's amount
+  const getEffectiveMonthly = (cost) => {
+    if (viewMode === 'after-cancel') {
+      const sorted = [...(cost.amountHistory || [])].sort((a, b) => b.validFrom.localeCompare(a.validFrom));
+      const amount = sorted.length > 0 ? sorted[0].amount : 0;
+      if (cost.frequency === 'yearly') return amount / 12;
+      if (cost.frequency === 'custom' && cost.frequencyMonths) return amount / cost.frequencyMonths;
+      return amount;
+    }
+    return getMonthlyAmount(cost);
+  };
+  const getEffectiveYearly = (cost) => {
+    if (viewMode === 'after-cancel') {
+      const sorted = [...(cost.amountHistory || [])].sort((a, b) => b.validFrom.localeCompare(a.validFrom));
+      const amount = sorted.length > 0 ? sorted[0].amount : 0;
+      if (cost.frequency === 'yearly') return amount;
+      if (cost.frequency === 'custom' && cost.frequencyMonths) return (amount / cost.frequencyMonths) * 12;
+      return amount * 12;
+    }
+    return getYearlyAmount(cost);
+  };
+
+  const totalMonthly = relevantCosts.reduce((sum, c) => sum + getEffectiveMonthly(c), 0);
+  const totalYearly = relevantCosts.reduce((sum, c) => sum + getEffectiveYearly(c), 0);
 
   // Income calculations - filter same way as costs
   const relevantIncomes = useMemo(() => {
@@ -183,8 +205,8 @@ export default function DashboardPage() {
     });
   }, [incomes, viewMode]);
 
-  const totalMonthlyIncome = relevantIncomes.reduce((sum, inc) => sum + getMonthlyAmount(inc), 0);
-  const totalYearlyIncome = relevantIncomes.reduce((sum, inc) => sum + getYearlyAmount(inc), 0);
+  const totalMonthlyIncome = relevantIncomes.reduce((sum, inc) => sum + getEffectiveMonthly(inc), 0);
+  const totalYearlyIncome = relevantIncomes.reduce((sum, inc) => sum + getEffectiveYearly(inc), 0);
   const monthlyRemaining = totalMonthlyIncome - totalMonthly;
 
   // Per-month remaining for current year (each month can differ due to frequencies)
