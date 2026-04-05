@@ -35,6 +35,8 @@ export default function EingabenPage() {
   // For cancellation
   const [showCancel, setShowCancel] = useState(null);
   const [cancelDate, setCancelDate] = useState(new Date().toISOString().slice(0, 10));
+  const [editCancelId, setEditCancelId] = useState(null);
+  const [editCancelDate, setEditCancelDate] = useState('');
 
   const [deleteConfirm, setDeleteConfirm] = useState(null);
 
@@ -379,16 +381,28 @@ export default function EingabenPage() {
                   onClick={() => setExpandedId(expanded ? null : cost.id)}
                   className="flex items-center justify-between p-4 cursor-pointer hover:bg-surface-lighter/20 transition-colors"
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="text-xl">{cat?.icon || '📌'}</span>
-                    <div>
-                      <p className="font-medium text-white">{cost.name}</p>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-xl shrink-0">{cat?.icon || '📌'}</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-medium text-white">{cost.name}</p>
+                        {!active && cost.cancelledDate && (
+                          <span className="inline-flex items-center gap-1 text-[10px] bg-red-500/15 text-red-400 px-2 py-0.5 rounded-full border border-red-500/20">
+                            Gekündigt seit {new Date(cost.cancelledDate).toLocaleDateString('de-DE')}
+                          </span>
+                        )}
+                        {active && cost.cancelledDate && new Date(cost.cancelledDate) > new Date() && (
+                          <span className="inline-flex items-center gap-1 text-[10px] bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/20">
+                            Kündigung zum {new Date(cost.cancelledDate).toLocaleDateString('de-DE')}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-slate-500">
                         {cat?.name || 'Ohne Kategorie'} · {getFrequencyLabel(cost)} · Tag {cost.paymentDay}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-4 shrink-0">
                     <span className="text-lg font-bold text-white">{fmt(getCurrentAmount(cost))}</span>
                     {expanded ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
                   </div>
@@ -422,7 +436,7 @@ export default function EingabenPage() {
                           >
                             <History className="w-3.5 h-3.5" /> Betrag anpassen
                           </motion.button>
-                          {active ? (
+                          {!cost.cancelledDate ? (
                             <motion.button
                               whileHover={{ scale: 1.05 }}
                               whileTap={{ scale: 0.95 }}
@@ -432,14 +446,24 @@ export default function EingabenPage() {
                               <Clock className="w-3.5 h-3.5" /> Kündigen
                             </motion.button>
                           ) : (
-                            <motion.button
-                              whileHover={{ scale: 1.05 }}
-                              whileTap={{ scale: 0.95 }}
-                              onClick={() => handleReactivate(cost)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500/15 text-green-400 text-xs font-medium hover:bg-green-500/25 transition-colors"
-                            >
-                              Reaktivieren
-                            </motion.button>
+                            <>
+                              <motion.button
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
+                                onClick={() => { setEditCancelId(cost.id); setEditCancelDate(cost.cancelledDate); }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" /> Kündigung bearbeiten
+                              </motion.button>
+                              <motion.button
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
+                                onClick={() => handleReactivate(cost)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500/15 text-green-400 text-xs font-medium hover:bg-green-500/25 transition-colors"
+                              >
+                                Kündigung aufheben
+                              </motion.button>
+                            </>
                           )}
                           <motion.button
                             whileHover={{ scale: 1.05 }}
@@ -520,6 +544,47 @@ export default function EingabenPage() {
                                 </button>
                                 <button
                                   onClick={() => setShowCancel(null)}
+                                  className="px-4 py-2 rounded-lg text-slate-400 text-sm hover:text-white transition-colors"
+                                >
+                                  Abbrechen
+                                </button>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+
+                        {/* Edit cancellation date */}
+                        <AnimatePresence>
+                          {editCancelId === cost.id && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="glass-light rounded-xl p-4 space-y-3 overflow-hidden"
+                            >
+                              <p className="text-sm text-amber-300 font-medium">Kündigungsdatum bearbeiten</p>
+                              <p className="text-xs text-slate-500">
+                                Aktuell: {cost.cancelledDate ? new Date(cost.cancelledDate).toLocaleDateString('de-DE') : '–'}
+                              </p>
+                              <div className="flex flex-wrap gap-3">
+                                <input
+                                  type="date"
+                                  value={editCancelDate}
+                                  onChange={e => setEditCancelDate(e.target.value)}
+                                  className="px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 text-sm text-white outline-none"
+                                />
+                                <button
+                                  onClick={async () => {
+                                    await updateFixedCost(user.username, cost.id, { cancelledDate: editCancelDate });
+                                    setEditCancelId(null);
+                                    await loadData();
+                                  }}
+                                  className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 transition-colors"
+                                >
+                                  Speichern
+                                </button>
+                                <button
+                                  onClick={() => setEditCancelId(null)}
                                   className="px-4 py-2 rounded-lg text-slate-400 text-sm hover:text-white transition-colors"
                                 >
                                   Abbrechen
