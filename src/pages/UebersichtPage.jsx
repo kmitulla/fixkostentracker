@@ -53,6 +53,15 @@ export default function UebersichtPage() {
       if (sortBy === 'name') { va = a.name.toLowerCase(); vb = b.name.toLowerCase(); }
       else if (sortBy === 'amount') { va = getMonthlyAmount(a); vb = getMonthlyAmount(b); }
       else if (sortBy === 'day') { va = a.paymentDay || 0; vb = b.paymentDay || 0; }
+      else if (sortBy === 'category') {
+        va = (categoryMap[a.categoryId]?.name || 'zzz').toLowerCase();
+        vb = (categoryMap[b.categoryId]?.name || 'zzz').toLowerCase();
+      }
+      else if (sortBy === 'frequency') {
+        const freqOrder = { monthly: 1, custom: 2, yearly: 3 };
+        va = freqOrder[a.frequency] || 0;
+        vb = freqOrder[b.frequency] || 0;
+      }
       if (va < vb) return sortDir === 'asc' ? -1 : 1;
       if (va > vb) return sortDir === 'asc' ? 1 : -1;
       return 0;
@@ -118,6 +127,18 @@ export default function UebersichtPage() {
             <option value="cancelled">Gekündigt</option>
             <option value="all">Alle</option>
           </select>
+          <select
+            value={`${sortBy}-${sortDir}`}
+            onChange={e => { const [f, d] = e.target.value.split('-'); setSortBy(f); setSortDir(d); }}
+            className="px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 text-sm text-white outline-none cursor-pointer md:hidden"
+          >
+            <option value="name-asc">Name A-Z</option>
+            <option value="name-desc">Name Z-A</option>
+            <option value="amount-desc">Betrag ↓</option>
+            <option value="amount-asc">Betrag ↑</option>
+            <option value="day-asc">Zahltag ↑</option>
+            <option value="category-asc">Kategorie A-Z</option>
+          </select>
         </div>
       </div>
 
@@ -144,14 +165,18 @@ export default function UebersichtPage() {
           <button onClick={() => toggleSort('name')} className="col-span-4 flex items-center gap-1 hover:text-white transition-colors text-left">
             Name <ArrowUpDown className="w-3 h-3" />
           </button>
-          <div className="col-span-2">Kategorie</div>
+          <button onClick={() => toggleSort('category')} className="col-span-2 flex items-center gap-1 hover:text-white transition-colors text-left">
+            Kategorie <ArrowUpDown className="w-3 h-3" />
+          </button>
           <button onClick={() => toggleSort('amount')} className="col-span-2 flex items-center gap-1 hover:text-white transition-colors text-left">
             Betrag <ArrowUpDown className="w-3 h-3" />
           </button>
           <button onClick={() => toggleSort('day')} className="col-span-2 flex items-center gap-1 hover:text-white transition-colors text-left">
             Zahltag <ArrowUpDown className="w-3 h-3" />
           </button>
-          <div className="col-span-2 text-right">Frequenz</div>
+          <button onClick={() => toggleSort('frequency')} className="col-span-2 flex items-center gap-1 justify-end hover:text-white transition-colors">
+            Frequenz <ArrowUpDown className="w-3 h-3" />
+          </button>
         </div>
 
         {filteredCosts.length === 0 ? (

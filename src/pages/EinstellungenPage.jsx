@@ -273,7 +273,7 @@ export default function EinstellungenPage() {
                   <span className="text-sm font-medium text-white">{cat.name}</span>
                   <span className="w-3 h-3 rounded-full" style={{ backgroundColor: cat.color }} />
                 </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex items-center gap-1">
                   <button
                     onClick={() => handleEditCat(cat)}
                     className="p-1.5 rounded-lg text-slate-400 hover:text-primary-400 hover:bg-primary-500/10 transition-colors"

@@ -37,7 +37,7 @@ export default function Layout() {
             >
               💰
             </motion.span>
-            <span className="text-lg font-bold bg-gradient-to-r from-primary-400 to-accent-400 bg-clip-text text-transparent hidden sm:block">
+            <span className="text-lg font-bold bg-gradient-to-r from-primary-400 to-accent-400 bg-clip-text text-transparent">
               Fixkosten Tracker
             </span>
           </div>
