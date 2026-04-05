@@ -97,6 +97,24 @@ export async function deleteIncomeSource(username, incomeId) {
   await deleteDoc(doc(db, 'users', username, 'incomeSources', incomeId));
 }
 
+// --- Custom KPIs ---
+export async function getCustomKpis(username) {
+  const snapshot = await getDocs(collection(db, 'users', username, 'customKpis'));
+  return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function addCustomKpi(username, kpi) {
+  return await addDoc(collection(db, 'users', username, 'customKpis'), kpi);
+}
+
+export async function updateCustomKpi(username, kpiId, updates) {
+  await updateDoc(doc(db, 'users', username, 'customKpis', kpiId), updates);
+}
+
+export async function deleteCustomKpi(username, kpiId) {
+  await deleteDoc(doc(db, 'users', username, 'customKpis', kpiId));
+}
+
 // --- Utility functions ---
 export function getCurrentAmount(cost) {
   if (!cost.amountHistory || cost.amountHistory.length === 0) return 0;

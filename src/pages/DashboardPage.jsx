@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
-import { getFixedCosts, getCategories, getIncomeSources, getMonthlyAmount, getYearlyAmount, isCostActive, getCurrentAmount, getFrequencyLabel } from '../lib/firestore';
+import { getFixedCosts, getCategories, getIncomeSources, getCustomKpis, addCustomKpi, updateCustomKpi, deleteCustomKpi, getMonthlyAmount, getYearlyAmount, isCostActive, getCurrentAmount, getFrequencyLabel } from '../lib/firestore';
 import { TrendingUp, Calendar, CreditCard, PieChart as PieChartIcon, ArrowRight, BarChart3, ChevronLeft, ChevronRight, Settings2, Eye, EyeOff, Filter, Wallet, ArrowDownUp } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
@@ -56,11 +56,20 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
+// Get the amount valid at a specific date
 function getAmountAtDate(cost, dateStr) {
   if (!cost.amountHistory?.length) return 0;
   const sorted = [...cost.amountHistory].sort((a, b) => b.validFrom.localeCompare(a.validFrom));
   const entry = sorted.find(h => h.validFrom <= dateStr);
   return entry ? entry.amount : sorted[sorted.length - 1].amount;
+}
+
+// Get the amount for a specific month's payment, using the PAYMENT DAY as reference
+// If paymentDay is 3rd and amount changes on 6th, the 3rd still uses the old amount
+function getAmountForPayment(cost, year, month) {
+  const day = cost.paymentDay || 1;
+  const payDateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return getAmountAtDate(cost, payDateStr);
 }
 
 function isCostActiveAtDate(cost, dateStr) {
@@ -122,13 +131,10 @@ export default function DashboardPage() {
   // View mode: 'current' = exclude future-cancelled, 'after-cancel' = treat all future cancellations as done
   const [viewMode, setViewMode] = useState('current');
 
-  // Custom KPIs - persisted in localStorage
-  const [customKpis, setCustomKpis] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('customKpis') || '[]'); } catch { return []; }
-  });
+  // Custom KPIs - persisted in Firestore per user
+  const [customKpis, setCustomKpis] = useState([]);
   const [showKpiForm, setShowKpiForm] = useState(false);
-  const [kpiEdit, setKpiEdit] = useState(null); // { year, month (0-11 or 'all'), categoryIds: [], name }
-  const saveKpis = (kpis) => { setCustomKpis(kpis); localStorage.setItem('customKpis', JSON.stringify(kpis)); };
+  const [kpiEdit, setKpiEdit] = useState(null);
 
   // Chart config
   const [chartView, setChartView] = useState('year');
@@ -146,11 +152,13 @@ export default function DashboardPage() {
     Promise.all([
       getFixedCosts(user.username),
       getCategories(user.username),
-      getIncomeSources(user.username)
-    ]).then(([c, cats, inc]) => {
+      getIncomeSources(user.username),
+      getCustomKpis(user.username)
+    ]).then(([c, cats, inc, kpis]) => {
       setCosts(c);
       setCategories(cats);
       setIncomes(inc);
+      setCustomKpis(kpis);
       setLoading(false);
     });
   }, [user]);
@@ -217,16 +225,18 @@ export default function DashboardPage() {
       // Sum expenses for this month
       let expenseTotal = 0;
       relevantCosts.forEach(c => {
-        if (!isCostActiveAtDate(c, dateStr)) return;
+        const payDateStr = `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(c.paymentDay || 1).padStart(2, '0')}`;
+        if (!isCostActiveAtDate(c, payDateStr)) return;
         if (!costPaysInMonth(c, year, monthIdx)) return;
-        expenseTotal += getAmountAtDate(c, dateStr);
+        expenseTotal += getAmountForPayment(c, year, monthIdx);
       });
       // Sum incomes for this month
       let incomeTotal = 0;
       relevantIncomes.forEach(inc => {
-        if (!isCostActiveAtDate(inc, dateStr)) return;
+        const payDateStr = `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(inc.paymentDay || 1).padStart(2, '0')}`;
+        if (!isCostActiveAtDate(inc, payDateStr)) return;
         if (!costPaysInMonth(inc, year, monthIdx)) return;
-        incomeTotal += getAmountAtDate(inc, dateStr);
+        incomeTotal += getAmountForPayment(inc, year, monthIdx);
       });
       return { month: MONTH_NAMES[monthIdx], income: Math.round(incomeTotal * 100) / 100, expenses: Math.round(expenseTotal * 100) / 100, remaining: Math.round((incomeTotal - expenseTotal) * 100) / 100 };
     });
@@ -253,10 +263,15 @@ export default function DashboardPage() {
     const day = c.paymentDay || 1;
     const startDate = c.startDate ? new Date(c.startDate) : new Date(2000, 0, 1);
     const results = [];
+    const addPayment = (pd) => {
+      // Use amount valid at the actual payment date
+      const pdStr = pd.toISOString().slice(0, 10);
+      results.push({ ...c, nextDate: pd, currentAmount: getAmountAtDate(c, pdStr) });
+    };
     if (c.frequency === 'yearly') {
       for (let yo = -1; yo <= 1; yo++) {
         const pd = new Date(today.getFullYear() + yo, startDate.getMonth(), day);
-        if (pd >= minDate && pd <= maxDate) results.push({ ...c, nextDate: pd, currentAmount: getCurrentAmount(c) });
+        if (pd >= minDate && pd <= maxDate) addPayment(pd);
       }
     } else if (c.frequency === 'custom' && c.frequencyMonths > 1) {
       const st = startDate.getFullYear() * 12 + startDate.getMonth();
@@ -264,12 +279,12 @@ export default function DashboardPage() {
         const cd = new Date(today.getFullYear(), today.getMonth() + m, day);
         const ct = cd.getFullYear() * 12 + cd.getMonth();
         if ((ct - st) >= 0 && (ct - st) % c.frequencyMonths === 0 && cd >= minDate && cd <= maxDate)
-          results.push({ ...c, nextDate: cd, currentAmount: getCurrentAmount(c) });
+          addPayment(cd);
       }
     } else {
       for (let m = -1; m <= 1; m++) {
         const pd = new Date(today.getFullYear(), today.getMonth() + m, day);
-        if (pd >= minDate && pd <= maxDate) results.push({ ...c, nextDate: pd, currentAmount: getCurrentAmount(c) });
+        if (pd >= minDate && pd <= maxDate) addPayment(pd);
       }
     }
     return results;
@@ -301,16 +316,15 @@ export default function DashboardPage() {
 
     if (chartView === 'year') {
       return MONTH_NAMES.map((name, monthIdx) => {
-        const dateStr = `${chartYear}-${String(monthIdx + 1).padStart(2, '0')}-15`;
         const row = { name };
         let total = 0;
         catList.forEach(catId => {
           let catTotal = 0;
           costsForChart.forEach(c => {
             if ((c.categoryId || 'uncategorized') !== catId) return;
-            if (!isCostActiveAtDate(c, dateStr)) return;
+            if (!isCostActiveAtDate(c, `${chartYear}-${String(monthIdx + 1).padStart(2, '0')}-${String(c.paymentDay || 1).padStart(2, '0')}`)) return;
             if (!costPaysInMonth(c, chartYear, monthIdx)) return;
-            catTotal += getAmountAtDate(c, dateStr);
+            catTotal += getAmountForPayment(c, chartYear, monthIdx);
           });
           const catName = categoryMap[catId]?.name || 'Ohne Kategorie';
           row[catName] = Math.round(catTotal * 100) / 100;
@@ -649,8 +663,14 @@ export default function DashboardPage() {
                   </select>
                 </div>
                 <div>
-                  <p className="text-[10px] text-slate-400 mb-1">Kategorien</p>
+                  <p className="text-[10px] text-slate-400 mb-1">Kategorien (leer = alle)</p>
                   <div className="flex flex-wrap gap-1">
+                    <button onClick={() => {
+                      const ids = kpiEdit.categoryIds.includes('uncategorized') ? kpiEdit.categoryIds.filter(id => id !== 'uncategorized') : [...kpiEdit.categoryIds, 'uncategorized'];
+                      setKpiEdit({ ...kpiEdit, categoryIds: ids });
+                    }} className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${
+                      kpiEdit.categoryIds.includes('uncategorized') ? 'border-primary-500 bg-primary-500/20 text-white' : 'border-slate-700 text-slate-400 hover:text-white'
+                    }`}>📁 Nicht kategorisiert</button>
                     {categories.map(cat => (
                       <button key={cat.id} onClick={() => {
                         const ids = kpiEdit.categoryIds.includes(cat.id) ? kpiEdit.categoryIds.filter(id => id !== cat.id) : [...kpiEdit.categoryIds, cat.id];
@@ -662,11 +682,16 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => {
-                    if (!kpiEdit.name || kpiEdit.categoryIds.length === 0) return;
-                    const existing = customKpis.findIndex(k => k.id === kpiEdit.id);
-                    if (existing >= 0) { const u = [...customKpis]; u[existing] = kpiEdit; saveKpis(u); }
-                    else saveKpis([...customKpis, { ...kpiEdit, id: Date.now() }]);
+                  <button onClick={async () => {
+                    if (!kpiEdit.name) return;
+                    const data = { name: kpiEdit.name, year: kpiEdit.year, month: kpiEdit.month, categoryIds: kpiEdit.categoryIds };
+                    if (kpiEdit.id) {
+                      await updateCustomKpi(user.username, kpiEdit.id, data);
+                      setCustomKpis(prev => prev.map(k => k.id === kpiEdit.id ? { ...k, ...data } : k));
+                    } else {
+                      const ref = await addCustomKpi(user.username, data);
+                      setCustomKpis(prev => [...prev, { id: ref.id, ...data }]);
+                    }
                     setShowKpiForm(false); setKpiEdit(null);
                   }} className="px-3 py-1.5 rounded-lg bg-primary-600 text-white text-xs font-medium hover:bg-primary-500 transition-colors">Speichern</button>
                   <button onClick={() => { setShowKpiForm(false); setKpiEdit(null); }} className="px-3 py-1.5 rounded-lg text-slate-400 text-xs hover:text-white transition-colors">Abbrechen</button>
@@ -681,27 +706,30 @@ export default function DashboardPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {customKpis.map(kpi => {
-              // Calculate KPI value - use relevantCosts (filtered by viewMode)
-              const filtered = relevantCosts.filter(c => kpi.categoryIds.includes(c.categoryId));
+              // If no categories selected, include ALL costs (including uncategorized)
+              const allCats = kpi.categoryIds.length === 0;
+              const filtered = costs.filter(c => {
+                const catId = c.categoryId || 'uncategorized';
+                return allCats || kpi.categoryIds.includes(catId);
+              });
               let total = 0;
               let monthlyAvg = 0;
               if (kpi.month === 'all') {
-                // Sum actual payments across all months of the year
                 MONTH_NAMES.forEach((_, monthIdx) => {
-                  const dateStr = `${kpi.year}-${String(monthIdx + 1).padStart(2, '0')}-15`;
                   filtered.forEach(c => {
-                    if (!isCostActiveAtDate(c, dateStr)) return;
+                    const payDateStr = `${kpi.year}-${String(monthIdx + 1).padStart(2, '0')}-${String(c.paymentDay || 1).padStart(2, '0')}`;
+                    if (!isCostActiveAtDate(c, payDateStr)) return;
                     if (!costPaysInMonth(c, kpi.year, monthIdx)) return;
-                    total += getAmountAtDate(c, dateStr);
+                    total += getAmountForPayment(c, kpi.year, monthIdx);
                   });
                 });
                 monthlyAvg = total / 12;
               } else {
-                const dateStr = `${kpi.year}-${String(kpi.month + 1).padStart(2, '0')}-15`;
                 filtered.forEach(c => {
-                  if (!isCostActiveAtDate(c, dateStr)) return;
+                  const payDateStr = `${kpi.year}-${String(kpi.month + 1).padStart(2, '0')}-${String(c.paymentDay || 1).padStart(2, '0')}`;
+                  if (!isCostActiveAtDate(c, payDateStr)) return;
                   if (!costPaysInMonth(c, kpi.year, kpi.month)) return;
-                  total += getAmountAtDate(c, dateStr);
+                  total += getAmountForPayment(c, kpi.year, kpi.month);
                 });
               }
               return (
@@ -710,13 +738,16 @@ export default function DashboardPage() {
                     <p className="text-[10px] text-slate-500 uppercase tracking-wider">{kpi.name}</p>
                     <div className="flex gap-1">
                       <button onClick={() => { setKpiEdit(kpi); setShowKpiForm(true); }} className="text-slate-600 hover:text-white text-[10px] transition-colors">✏️</button>
-                      <button onClick={() => saveKpis(customKpis.filter(k => k.id !== kpi.id))} className="text-slate-600 hover:text-red-400 text-[10px] transition-colors">🗑️</button>
+                      <button onClick={async () => {
+                        await deleteCustomKpi(user.username, kpi.id);
+                        setCustomKpis(prev => prev.filter(k => k.id !== kpi.id));
+                      }} className="text-slate-600 hover:text-red-400 text-[10px] transition-colors">🗑️</button>
                     </div>
                   </div>
                   <p className="text-lg font-bold text-white">{fmt(total)}</p>
                   <p className="text-[10px] text-slate-500">
                     {kpi.month === 'all' ? `${kpi.year} gesamt` : `${MONTH_NAMES[kpi.month]} ${kpi.year}`}
-                    {' · '}{kpi.categoryIds.length} Kat.
+                    {' · '}{allCats ? 'Alle' : `${kpi.categoryIds.length} Kat.`}
                     {kpi.month === 'all' && ` · Ø ${fmt(monthlyAvg)}/M`}
                   </p>
                 </div>
