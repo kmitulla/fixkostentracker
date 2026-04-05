@@ -659,20 +659,24 @@ export default function DashboardPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {customKpis.map(kpi => {
-              // Calculate KPI value
+              // Calculate KPI value - use relevantCosts (filtered by viewMode)
+              const filtered = relevantCosts.filter(c => kpi.categoryIds.includes(c.categoryId));
               let total = 0;
+              let monthlyAvg = 0;
               if (kpi.month === 'all') {
+                // Sum actual payments across all months of the year
                 MONTH_NAMES.forEach((_, monthIdx) => {
                   const dateStr = `${kpi.year}-${String(monthIdx + 1).padStart(2, '0')}-15`;
-                  costs.filter(c => kpi.categoryIds.includes(c.categoryId)).forEach(c => {
+                  filtered.forEach(c => {
                     if (!isCostActiveAtDate(c, dateStr)) return;
                     if (!costPaysInMonth(c, kpi.year, monthIdx)) return;
                     total += getAmountAtDate(c, dateStr);
                   });
                 });
+                monthlyAvg = total / 12;
               } else {
                 const dateStr = `${kpi.year}-${String(kpi.month + 1).padStart(2, '0')}-15`;
-                costs.filter(c => kpi.categoryIds.includes(c.categoryId)).forEach(c => {
+                filtered.forEach(c => {
                   if (!isCostActiveAtDate(c, dateStr)) return;
                   if (!costPaysInMonth(c, kpi.year, kpi.month)) return;
                   total += getAmountAtDate(c, dateStr);
@@ -691,6 +695,7 @@ export default function DashboardPage() {
                   <p className="text-[10px] text-slate-500">
                     {kpi.month === 'all' ? `${kpi.year} gesamt` : `${MONTH_NAMES[kpi.month]} ${kpi.year}`}
                     {' · '}{kpi.categoryIds.length} Kat.
+                    {kpi.month === 'all' && ` · Ø ${fmt(monthlyAvg)}/M`}
                   </p>
                 </div>
               );
