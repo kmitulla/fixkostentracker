@@ -122,6 +122,14 @@ export default function DashboardPage() {
   // View mode: 'current' = exclude future-cancelled, 'after-cancel' = treat all future cancellations as done
   const [viewMode, setViewMode] = useState('current');
 
+  // Custom KPIs - persisted in localStorage
+  const [customKpis, setCustomKpis] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('customKpis') || '[]'); } catch { return []; }
+  });
+  const [showKpiForm, setShowKpiForm] = useState(false);
+  const [kpiEdit, setKpiEdit] = useState(null); // { year, month (0-11 or 'all'), categoryIds: [], name }
+  const saveKpis = (kpis) => { setCustomKpis(kpis); localStorage.setItem('customKpis', JSON.stringify(kpis)); };
+
   // Chart config
   const [chartView, setChartView] = useState('year');
   const [chartType, setChartType] = useState('stacked-bar');
@@ -589,6 +597,107 @@ export default function DashboardPage() {
           )}
         </motion.div>
       </div>
+
+      {/* Custom KPIs */}
+      <motion.div variants={item} className="glass rounded-2xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-primary-400" /> Eigene KPIs
+          </h2>
+          <button onClick={() => { setKpiEdit({ name: '', year: new Date().getFullYear(), month: 'all', categoryIds: [] }); setShowKpiForm(true); }}
+            className="text-xs text-primary-400 hover:text-primary-300 transition-colors">+ Neue KPI</button>
+        </div>
+
+        {/* KPI Form */}
+        <AnimatePresence>
+          {showKpiForm && kpiEdit && (
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden mb-3">
+              <div className="glass-light rounded-xl p-3 space-y-2">
+                <input type="text" placeholder="KPI Name" value={kpiEdit.name} onChange={e => setKpiEdit({ ...kpiEdit, name: e.target.value })}
+                  className="w-full bg-surface-light border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary-500" />
+                <div className="flex gap-2 flex-wrap">
+                  <select value={kpiEdit.year} onChange={e => setKpiEdit({ ...kpiEdit, year: Number(e.target.value) })}
+                    className="bg-surface-light border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-primary-500">
+                    {[...Array(5)].map((_, i) => { const y = new Date().getFullYear() - 2 + i; return <option key={y} value={y}>{y}</option>; })}
+                  </select>
+                  <select value={kpiEdit.month} onChange={e => setKpiEdit({ ...kpiEdit, month: e.target.value === 'all' ? 'all' : Number(e.target.value) })}
+                    className="bg-surface-light border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-primary-500">
+                    <option value="all">Ganzes Jahr</option>
+                    {MONTH_NAMES.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <p className="text-[10px] text-slate-400 mb-1">Kategorien</p>
+                  <div className="flex flex-wrap gap-1">
+                    {categories.map(cat => (
+                      <button key={cat.id} onClick={() => {
+                        const ids = kpiEdit.categoryIds.includes(cat.id) ? kpiEdit.categoryIds.filter(id => id !== cat.id) : [...kpiEdit.categoryIds, cat.id];
+                        setKpiEdit({ ...kpiEdit, categoryIds: ids });
+                      }} className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${
+                        kpiEdit.categoryIds.includes(cat.id) ? 'border-primary-500 bg-primary-500/20 text-white' : 'border-slate-700 text-slate-400 hover:text-white'
+                      }`}>{cat.icon} {cat.name}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => {
+                    if (!kpiEdit.name || kpiEdit.categoryIds.length === 0) return;
+                    const existing = customKpis.findIndex(k => k.id === kpiEdit.id);
+                    if (existing >= 0) { const u = [...customKpis]; u[existing] = kpiEdit; saveKpis(u); }
+                    else saveKpis([...customKpis, { ...kpiEdit, id: Date.now() }]);
+                    setShowKpiForm(false); setKpiEdit(null);
+                  }} className="px-3 py-1.5 rounded-lg bg-primary-600 text-white text-xs font-medium hover:bg-primary-500 transition-colors">Speichern</button>
+                  <button onClick={() => { setShowKpiForm(false); setKpiEdit(null); }} className="px-3 py-1.5 rounded-lg text-slate-400 text-xs hover:text-white transition-colors">Abbrechen</button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {customKpis.length === 0 && !showKpiForm ? (
+          <p className="text-slate-500 text-xs py-2 text-center">Erstelle eigene KPIs mit bestimmten Kategorien und Zeiträumen</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {customKpis.map(kpi => {
+              // Calculate KPI value
+              let total = 0;
+              if (kpi.month === 'all') {
+                MONTH_NAMES.forEach((_, monthIdx) => {
+                  const dateStr = `${kpi.year}-${String(monthIdx + 1).padStart(2, '0')}-15`;
+                  costs.filter(c => kpi.categoryIds.includes(c.categoryId)).forEach(c => {
+                    if (!isCostActiveAtDate(c, dateStr)) return;
+                    if (!costPaysInMonth(c, kpi.year, monthIdx)) return;
+                    total += getAmountAtDate(c, dateStr);
+                  });
+                });
+              } else {
+                const dateStr = `${kpi.year}-${String(kpi.month + 1).padStart(2, '0')}-15`;
+                costs.filter(c => kpi.categoryIds.includes(c.categoryId)).forEach(c => {
+                  if (!isCostActiveAtDate(c, dateStr)) return;
+                  if (!costPaysInMonth(c, kpi.year, kpi.month)) return;
+                  total += getAmountAtDate(c, dateStr);
+                });
+              }
+              return (
+                <div key={kpi.id} className="glass-light rounded-xl p-3 group relative">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider">{kpi.name}</p>
+                    <div className="flex gap-1">
+                      <button onClick={() => { setKpiEdit(kpi); setShowKpiForm(true); }} className="text-slate-600 hover:text-white text-[10px] transition-colors">✏️</button>
+                      <button onClick={() => saveKpis(customKpis.filter(k => k.id !== kpi.id))} className="text-slate-600 hover:text-red-400 text-[10px] transition-colors">🗑️</button>
+                    </div>
+                  </div>
+                  <p className="text-lg font-bold text-white">{fmt(total)}</p>
+                  <p className="text-[10px] text-slate-500">
+                    {kpi.month === 'all' ? `${kpi.year} gesamt` : `${MONTH_NAMES[kpi.month]} ${kpi.year}`}
+                    {' · '}{kpi.categoryIds.length} Kat.
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </motion.div>
 
       {/* Charts section */}
       {costs.length > 0 && (
