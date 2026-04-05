@@ -81,27 +81,33 @@ function costPaysInMonth(cost, year, month) {
   return true;
 }
 
-// Custom bar label that shows total on top of stacked bars
+// Custom bar label that shows total on top of stacked bars - rotated to avoid overlap
 function StackedBarTotalLabel({ x, y, width, value }) {
   if (!value || value === 0) return null;
   return (
-    <text x={x + width / 2} y={y - 6} textAnchor="middle" fill="#94a3b8" fontSize={10} fontWeight={500}>
+    <text x={x + width / 2} y={y - 8} textAnchor="end" fill="#94a3b8" fontSize={9} fontWeight={500}
+      transform={`rotate(-45, ${x + width / 2}, ${y - 8})`}>
       {fmtShort(value)}
     </text>
   );
 }
 
-// Donut label
+// Donut label - shows ALL values with lines connecting to slices
 function DonutLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent, value, name }) {
   const RADIAN = Math.PI / 180;
-  const radius = outerRadius + 22;
+  const radius = outerRadius + 28;
   const x = cx + radius * Math.cos(-midAngle * RADIAN);
   const y = cy + radius * Math.sin(-midAngle * RADIAN);
-  if (percent < 0.04) return null;
+  // Line from slice to label
+  const mx = cx + (outerRadius + 10) * Math.cos(-midAngle * RADIAN);
+  const my = cy + (outerRadius + 10) * Math.sin(-midAngle * RADIAN);
   return (
-    <text x={x} y={y} textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central" fill="#cbd5e1" fontSize={10}>
-      {`${(percent * 100).toFixed(0)}% · ${fmtShort(value)}`}
-    </text>
+    <g>
+      <line x1={mx} y1={my} x2={x} y2={y} stroke="#475569" strokeWidth={0.5} />
+      <text x={x} y={y} textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central" fill="#cbd5e1" fontSize={9}>
+        {`${(percent * 100).toFixed(0)}% · ${fmtShort(value)}`}
+      </text>
+    </g>
   );
 }
 
@@ -332,11 +338,11 @@ export default function DashboardPage() {
   const renderChart = () => {
     if (chartType === 'donut') {
       return (
-        <ResponsiveContainer width="100%" height={340}>
+        <ResponsiveContainer width="100%" height={400}>
           <PieChart>
-            <Pie data={donutData} cx="50%" cy="50%" innerRadius={65} outerRadius={105}
+            <Pie data={donutData} cx="50%" cy="50%" innerRadius={55} outerRadius={90}
               paddingAngle={3} dataKey="value" nameKey="name" stroke="none"
-              label={showDonutLabels ? DonutLabel : false}>
+              label={showDonutLabels ? DonutLabel : false} labelLine={false}>
               {donutData.map((d, i) => <Cell key={i} fill={d.color} />)}
             </Pie>
             <Tooltip content={<ChartTooltip />} />
@@ -385,8 +391,8 @@ export default function DashboardPage() {
 
     // stacked bar
     return (
-      <ResponsiveContainer width="100%" height={320}>
-        <BarChart data={chartData} margin={{ top: 25, right: 10, bottom: 5, left: 5 }}>
+      <ResponsiveContainer width="100%" height={340}>
+        <BarChart data={chartData} margin={{ top: 45, right: 10, bottom: 5, left: 5 }}>
           <CartesianGrid {...gridProps} />
           <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={{ stroke: '#334155' }} tickLine={false} />
           <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={{ stroke: '#334155' }} tickLine={false} tickFormatter={v => fmtShort(v)} />
