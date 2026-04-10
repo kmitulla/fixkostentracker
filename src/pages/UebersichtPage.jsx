@@ -193,8 +193,9 @@ export default function UebersichtPage() {
               const expanded = expandedId === cost.id;
               const hasFutureCancellation = active && cost.cancelledDate;
               const today = new Date().toISOString().slice(0, 10);
+              const currentAmt = getCurrentAmount(cost);
               const futureAmounts = (cost.amountHistory || [])
-                .filter(h => h.validFrom > today)
+                .filter(h => h.validFrom > today && h.amount !== currentAmt)
                 .sort((a, b) => a.validFrom.localeCompare(b.validFrom));
 
               return (

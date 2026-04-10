@@ -163,17 +163,11 @@ export default function DashboardPage() {
     });
   }, [user]);
 
-  // Filter costs based on viewMode
+  // Filter costs based on viewMode - use isCostActive for consistency with Übersicht
   const relevantCosts = useMemo(() => {
-    const todayStr = new Date().toISOString().slice(0, 10);
     return costs.filter(c => {
-      // Always exclude costs already cancelled (today or past)
-      if (c.cancelledDate && c.cancelledDate <= todayStr) return false;
-      // In 'after-cancel' mode, also exclude future-cancelled costs
-      if (viewMode === 'after-cancel' && c.cancelledDate) return false;
-      // Must have started
-      if (c.startDate && c.startDate > todayStr) return false;
-      return true;
+      if (viewMode === 'after-cancel') return !c.cancelledDate;
+      return isCostActive(c);
     });
   }, [costs, viewMode]);
 
@@ -202,14 +196,11 @@ export default function DashboardPage() {
   const totalMonthly = relevantCosts.reduce((sum, c) => sum + getEffectiveMonthly(c), 0);
   const totalYearly = relevantCosts.reduce((sum, c) => sum + getEffectiveYearly(c), 0);
 
-  // Income calculations - filter same way as costs
+  // Income calculations - use isCostActive for consistency with Übersicht
   const relevantIncomes = useMemo(() => {
-    const todayStr = new Date().toISOString().slice(0, 10);
     return incomes.filter(inc => {
-      if (inc.cancelledDate && inc.cancelledDate <= todayStr) return false;
-      if (viewMode === 'after-cancel' && inc.cancelledDate) return false;
-      if (inc.startDate && inc.startDate > todayStr) return false;
-      return true;
+      if (viewMode === 'after-cancel') return !inc.cancelledDate;
+      return isCostActive(inc);
     });
   }, [incomes, viewMode]);
 
