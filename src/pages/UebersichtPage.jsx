@@ -37,6 +37,7 @@ export default function UebersichtPage() {
     // Filter by status
     if (filterStatus === 'active') result = result.filter(isCostActive);
     else if (filterStatus === 'cancelled') result = result.filter(c => !isCostActive(c));
+    else if (filterStatus === 'future_cancelled') result = result.filter(c => isCostActive(c) && c.cancelledDate);
 
     // Filter by category
     if (filterCategory !== 'all') result = result.filter(c => c.categoryId === filterCategory);
@@ -124,6 +125,7 @@ export default function UebersichtPage() {
             className="px-4 py-2.5 rounded-xl bg-surface-light/80 border border-slate-700 text-sm text-white outline-none cursor-pointer"
           >
             <option value="active">Aktiv</option>
+            <option value="future_cancelled">Zukünftig gekündigt</option>
             <option value="cancelled">Gekündigt</option>
             <option value="all">Alle</option>
           </select>
@@ -189,6 +191,11 @@ export default function UebersichtPage() {
               const cat = categoryMap[cost.categoryId];
               const active = isCostActive(cost);
               const expanded = expandedId === cost.id;
+              const hasFutureCancellation = active && cost.cancelledDate;
+              const today = new Date().toISOString().slice(0, 10);
+              const futureAmounts = (cost.amountHistory || [])
+                .filter(h => h.validFrom > today)
+                .sort((a, b) => a.validFrom.localeCompare(b.validFrom));
 
               return (
                 <motion.div
@@ -210,6 +217,12 @@ export default function UebersichtPage() {
                       </div>
                       {!active && (
                         <span className="text-xs bg-red-500/15 text-red-400 px-2 py-0.5 rounded-full">Gekündigt</span>
+                      )}
+                      {hasFutureCancellation && (
+                        <span className="text-xs bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded-full">Endet {new Date(cost.cancelledDate).toLocaleDateString('de-DE')}</span>
+                      )}
+                      {futureAmounts.length > 0 && (
+                        <span className="text-xs bg-blue-500/15 text-blue-400 px-2 py-0.5 rounded-full">Beitragsänderung</span>
                       )}
                     </div>
                     <div className="hidden md:flex col-span-2 items-center gap-2 text-sm text-slate-300">
@@ -256,11 +269,30 @@ export default function UebersichtPage() {
                               </div>
                               <div>
                                 <p className="text-slate-500 text-xs">Status</p>
-                                <p className={active ? 'text-green-400' : 'text-red-400'}>
-                                  {active ? 'Aktiv' : `Gekündigt (${cost.cancelledDate})`}
-                                </p>
+                                {!active ? (
+                                  <p className="text-red-400">Gekündigt ({new Date(cost.cancelledDate).toLocaleDateString('de-DE')})</p>
+                                ) : hasFutureCancellation ? (
+                                  <p className="text-amber-400">Gekündigt zum {new Date(cost.cancelledDate).toLocaleDateString('de-DE')}</p>
+                                ) : (
+                                  <p className="text-green-400">Aktiv</p>
+                                )}
                               </div>
                             </div>
+
+                            {/* Future price adjustments */}
+                            {futureAmounts.length > 0 && (
+                              <div className="mt-3 pt-3 border-t border-slate-700/50">
+                                <p className="text-xs text-blue-400 mb-2 font-medium">Zukünftige Beitragsanpassung</p>
+                                <div className="space-y-1">
+                                  {futureAmounts.map((h, idx) => (
+                                    <div key={idx} className="flex items-center justify-between text-xs bg-blue-500/10 rounded-lg px-3 py-2">
+                                      <span className="text-blue-300">Ab {new Date(h.validFrom).toLocaleDateString('de-DE')}</span>
+                                      <span className="text-blue-200 font-medium">{fmt(h.amount)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
 
                             {/* Amount history */}
                             {cost.amountHistory && cost.amountHistory.length > 1 && (
@@ -271,7 +303,7 @@ export default function UebersichtPage() {
                                     .sort((a, b) => b.validFrom.localeCompare(a.validFrom))
                                     .map((h, idx) => (
                                       <div key={idx} className="flex items-center justify-between text-xs">
-                                        <span className="text-slate-500">Ab {h.validFrom}</span>
+                                        <span className="text-slate-500">Ab {new Date(h.validFrom).toLocaleDateString('de-DE')}</span>
                                         <span className="text-white font-medium">{fmt(h.amount)}</span>
                                       </div>
                                     ))}

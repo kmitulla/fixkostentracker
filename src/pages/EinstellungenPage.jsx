@@ -22,6 +22,7 @@ export default function EinstellungenPage() {
   const [catIcon, setCatIcon] = useState('📁');
   const [deletingCat, setDeletingCat] = useState(null);
   const [customEmoji, setCustomEmoji] = useState('');
+  const [customColor, setCustomColor] = useState('#ffffff');
 
   // Password
   const [showPwForm, setShowPwForm] = useState(false);
@@ -232,6 +233,46 @@ export default function EinstellungenPage() {
                       />
                     ))}
                   </div>
+                  <div className="flex items-center gap-2 mt-3">
+                    <label className="relative w-9 h-9 rounded-full cursor-pointer overflow-hidden ring-1 ring-slate-600 hover:ring-slate-400 transition-all flex-shrink-0" style={{ backgroundColor: customColor }}>
+                      <input
+                        type="color"
+                        value={customColor}
+                        onChange={e => setCustomColor(e.target.value)}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                      />
+                    </label>
+                    <input
+                      type="text"
+                      value={customColor}
+                      onChange={e => {
+                        const v = e.target.value;
+                        setCustomColor(v);
+                        if (/^#[0-9a-fA-F]{6}$/.test(v)) setCatColor(v);
+                      }}
+                      placeholder="#ff5500"
+                      className="flex-1 px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 focus:border-accent-500 outline-none text-sm text-white placeholder-slate-500 transition-colors font-mono"
+                      maxLength={7}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (/^#[0-9a-fA-F]{6}$/.test(customColor)) {
+                          setCatColor(customColor);
+                        }
+                      }}
+                      className="px-3 py-2 rounded-lg bg-accent-500/20 text-accent-400 text-sm font-medium hover:bg-accent-500/30 transition-colors"
+                    >
+                      Übernehmen
+                    </button>
+                  </div>
+                  {catColor && !COLOR_OPTIONS.includes(catColor) && (
+                    <div className="mt-2 flex items-center gap-2 text-sm text-slate-400">
+                      <span>Gewählt:</span>
+                      <span className="w-6 h-6 rounded-full ring-2 ring-white" style={{ backgroundColor: catColor }} />
+                      <span className="font-mono text-xs text-slate-500">{catColor}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-2 pt-1">
