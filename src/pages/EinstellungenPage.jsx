@@ -3,7 +3,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { getCategories, addCategory, updateCategory, deleteCategory } from '../lib/firestore';
 import {
-  Settings, Palette, Plus, Edit3, Trash2, Save, X, Lock, Eye, EyeOff, Tag
+  getNotificationSettings, saveNotificationSettings,
+  requestNotificationPermission, isNotificationSupported, checkAndNotify,
+  DEFAULT_NOTIFICATION_SETTINGS,
+} from '../lib/notifications';
+import {
+  Settings, Palette, Plus, Edit3, Trash2, Save, X, Lock, Eye, EyeOff, Tag, Bell, BellRing
 } from 'lucide-react';
 
 const DEFAULT_EMOJIS = ['📁', '🏠', '🚗', '📱', '🎬', '🎵', '💡', '🏥', '🎓', '🛡️', '🍔', '🏋️', '✈️', '👕', '🐾', '💻', '📰', '🎮', '☁️', '📦', '💳', '📞', '🧹', '💊', '🎭', '🏦', '⚡', '💧', '🌐', '🔒'];
@@ -33,14 +38,124 @@ export default function EinstellungenPage() {
   const [showNewPw, setShowNewPw] = useState(false);
   const [pwMsg, setPwMsg] = useState({ type: '', text: '' });
 
+  // Notifications
+  const [notif, setNotif] = useState({ ...DEFAULT_NOTIFICATION_SETTINGS });
+  const [notifDaysText, setNotifDaysText] = useState('3, 1, 0');
+  const [notifPerm, setNotifPerm] = useState(
+    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
+  );
+  const [notifMsg, setNotifMsg] = useState({ type: '', text: '' });
+  const [savingNotif, setSavingNotif] = useState(false);
+
   const loadCategories = async () => {
     if (!user) return;
     const cats = await getCategories(user.username);
     setCategories(cats);
+    try {
+      const s = await getNotificationSettings(user.username);
+      setNotif(s);
+      setNotifDaysText((s.daysBefore || []).join(', '));
+    } catch { /* ignore */ }
     setLoading(false);
   };
 
   useEffect(() => { loadCategories(); }, [user]);
+
+  const parseDaysInput = (str) => {
+    return Array.from(new Set(
+      String(str).split(/[\s,;]+/).map(s => s.trim()).filter(Boolean)
+        .map(s => parseInt(s, 10)).filter(n => !isNaN(n) && n >= 0 && n <= 90)
+    )).sort((a, b) => b - a);
+  };
+
+  const handleEnableNotifications = async () => {
+    setNotifMsg({ type: '', text: '' });
+    if (!isNotificationSupported()) {
+      setNotifMsg({ type: 'error', text: 'Dein Browser unterstützt keine Benachrichtigungen. Auf iPhone: App über "Teilen → Zum Home-Bildschirm" installieren.' });
+      return;
+    }
+    const perm = await requestNotificationPermission();
+    setNotifPerm(perm);
+    if (perm !== 'granted') {
+      setNotifMsg({ type: 'error', text: 'Benachrichtigungen wurden blockiert. Bitte in den System-/Safari-Einstellungen erlauben.' });
+      return;
+    }
+    const next = { ...notif, enabled: true };
+    setNotif(next);
+    await saveNotificationSettings(user.username, next);
+    setNotifMsg({ type: 'success', text: 'Benachrichtigungen aktiviert!' });
+  };
+
+  const handleSaveNotifications = async () => {
+    setSavingNotif(true);
+    setNotifMsg({ type: '', text: '' });
+    try {
+      const days = parseDaysInput(notifDaysText);
+      const next = {
+        enabled: !!notif.enabled,
+        daysBefore: days.length > 0 ? days : DEFAULT_NOTIFICATION_SETTINGS.daysBefore,
+        includeIncome: !!notif.includeIncome,
+      };
+      setNotif(next);
+      setNotifDaysText(next.daysBefore.join(', '));
+      await saveNotificationSettings(user.username, next);
+      setNotifMsg({ type: 'success', text: 'Einstellungen gespeichert.' });
+    } catch (err) {
+      setNotifMsg({ type: 'error', text: err.message || 'Fehler beim Speichern' });
+    } finally {
+      setSavingNotif(false);
+    }
+  };
+
+  const handleTestNotification = async () => {
+    setNotifMsg({ type: '', text: '' });
+    if (Notification.permission !== 'granted') {
+      const perm = await requestNotificationPermission();
+      setNotifPerm(perm);
+      if (perm !== 'granted') {
+        setNotifMsg({ type: 'error', text: 'Bitte erst Benachrichtigungen erlauben.' });
+        return;
+      }
+    }
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg && reg.showNotification) {
+        await reg.showNotification('Fixkosten Tracker', {
+          body: 'Test-Erinnerung: So wirst du vor einer Abbuchung informiert.',
+          icon: '/fixkostentracker/icon-192x192.png',
+          badge: '/fixkostentracker/icon-192x192.png',
+          tag: 'test-notification',
+          data: { url: '/fixkostentracker/' },
+        });
+      } else {
+        new Notification('Fixkosten Tracker', {
+          body: 'Test-Erinnerung: So wirst du vor einer Abbuchung informiert.',
+          icon: '/fixkostentracker/icon-192x192.png',
+        });
+      }
+      setNotifMsg({ type: 'success', text: 'Test-Benachrichtigung gesendet.' });
+    } catch (err) {
+      setNotifMsg({ type: 'error', text: 'Test fehlgeschlagen: ' + err.message });
+    }
+  };
+
+  const handleRunCheckNow = async () => {
+    setNotifMsg({ type: '', text: '' });
+    try {
+      const res = await checkAndNotify(user.username);
+      if (res.reason === 'no-permission') {
+        setNotifMsg({ type: 'error', text: 'Keine Berechtigung. Bitte zuerst aktivieren.' });
+      } else if (res.reason === 'disabled') {
+        setNotifMsg({ type: 'error', text: 'Erinnerungen sind deaktiviert.' });
+      } else if (res.reason === 'unsupported') {
+        setNotifMsg({ type: 'error', text: 'Nicht unterstützt.' });
+      } else {
+        setNotifMsg({ type: 'success', text: `${res.shown} Erinnerung(en) ausgelöst (${res.total || 0} anstehende Abbuchungen im Fenster).` });
+      }
+    } catch (err) {
+      setNotifMsg({ type: 'error', text: err.message });
+    }
+  };
 
   const resetCatForm = () => {
     setCatName('');
@@ -120,6 +235,148 @@ export default function EinstellungenPage() {
         <Settings className="w-6 h-6 text-primary-400" />
         Einstellungen
       </h1>
+
+      {/* Notifications section */}
+      <div className="glass rounded-2xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <BellRing className="w-5 h-5 text-primary-400" />
+            Erinnerungen (Push)
+          </h2>
+          <span className={`text-xs px-2 py-1 rounded-full ${
+            notifPerm === 'granted' ? 'bg-green-500/15 text-green-400' :
+            notifPerm === 'denied' ? 'bg-red-500/15 text-red-400' :
+            'bg-slate-500/15 text-slate-400'
+          }`}>
+            {notifPerm === 'granted' ? 'Erlaubt' :
+             notifPerm === 'denied' ? 'Blockiert' :
+             notifPerm === 'unsupported' ? 'Nicht unterstützt' : 'Nicht erlaubt'}
+          </span>
+        </div>
+
+        <p className="text-sm text-slate-400 mb-4">
+          Werde erinnert, bevor eine Abbuchung ansteht. Auf dem iPhone: App über <span className="text-slate-200">Safari → Teilen → Zum Home-Bildschirm</span> installieren, dann Benachrichtigungen erlauben. Erinnerungen werden beim Öffnen der App geprüft.
+        </p>
+
+        <div className="space-y-4">
+          <label className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-light/50">
+            <div className="flex items-center gap-3">
+              <Bell className="w-4 h-4 text-primary-400" />
+              <div>
+                <div className="text-sm font-medium text-white">Erinnerungen aktiviert</div>
+                <div className="text-xs text-slate-500">Benachrichtige mich vor bevorstehenden Abbuchungen</div>
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={!!notif.enabled}
+              onChange={async (e) => {
+                const v = e.target.checked;
+                if (v && Notification.permission !== 'granted') {
+                  await handleEnableNotifications();
+                  return;
+                }
+                const next = { ...notif, enabled: v };
+                setNotif(next);
+                await saveNotificationSettings(user.username, next);
+              }}
+              className="w-5 h-5 accent-primary-500"
+            />
+          </label>
+
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">Tage vor Abbuchung erinnern (kommagetrennt, z.B. "3, 1, 0")</label>
+            <input
+              type="text"
+              value={notifDaysText}
+              onChange={e => setNotifDaysText(e.target.value)}
+              placeholder="3, 1, 0"
+              className="w-full px-3 py-2 rounded-lg bg-surface/80 border border-slate-700 focus:border-primary-500 outline-none text-sm text-white placeholder-slate-500 transition-colors"
+            />
+            <div className="flex flex-wrap gap-2 mt-2">
+              {[0, 1, 2, 3, 5, 7, 14].map(d => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => {
+                    const current = parseDaysInput(notifDaysText);
+                    const set = new Set(current);
+                    if (set.has(d)) set.delete(d); else set.add(d);
+                    const arr = Array.from(set).sort((a, b) => b - a);
+                    setNotifDaysText(arr.join(', '));
+                  }}
+                  className={`px-2.5 py-1 text-xs rounded-lg transition-colors ${
+                    parseDaysInput(notifDaysText).includes(d)
+                      ? 'bg-primary-500/25 text-primary-300 ring-1 ring-primary-500/40'
+                      : 'bg-surface-lighter/50 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {d === 0 ? 'am Tag' : d === 1 ? '1 Tag' : `${d} Tage`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="flex items-center gap-3 p-3 rounded-xl bg-surface-light/50">
+            <input
+              type="checkbox"
+              checked={!!notif.includeIncome}
+              onChange={e => setNotif({ ...notif, includeIncome: e.target.checked })}
+              className="w-4 h-4 accent-primary-500"
+            />
+            <span className="text-sm text-white">Auch bei Einnahmen erinnern</span>
+          </label>
+
+          <AnimatePresence>
+            {notifMsg.text && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className={`text-sm p-3 rounded-lg ${
+                  notifMsg.type === 'error' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-green-500/10 text-green-400 border border-green-500/20'
+                }`}
+              >
+                {notifMsg.text}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleSaveNotifications}
+              disabled={savingNotif}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-600 text-white text-sm font-medium hover:bg-primary-500 transition-colors disabled:opacity-60"
+            >
+              <Save className="w-4 h-4" /> Speichern
+            </button>
+            {notifPerm !== 'granted' && (
+              <button
+                type="button"
+                onClick={handleEnableNotifications}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent-600 text-white text-sm font-medium hover:bg-accent-500 transition-colors"
+              >
+                <Bell className="w-4 h-4" /> Aktivieren
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleTestNotification}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-surface-lighter/60 text-slate-200 text-sm font-medium hover:bg-surface-lighter transition-colors"
+            >
+              <BellRing className="w-4 h-4" /> Test-Benachrichtigung
+            </button>
+            <button
+              type="button"
+              onClick={handleRunCheckNow}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-surface-lighter/60 text-slate-200 text-sm font-medium hover:bg-surface-lighter transition-colors"
+            >
+              Jetzt prüfen
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Categories section */}
       <div className="glass rounded-2xl p-6">
