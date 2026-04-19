@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginPage from './pages/LoginPage';
@@ -7,6 +8,7 @@ import UebersichtPage from './pages/UebersichtPage';
 import EingabenPage from './pages/EingabenPage';
 import EinstellungenPage from './pages/EinstellungenPage';
 import AdminPage from './pages/AdminPage';
+import { checkAndNotify } from './lib/notifications';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -26,9 +28,28 @@ function PublicRoute({ children }) {
   return children;
 }
 
+function ReminderRunner() {
+  const { user } = useAuth();
+  useEffect(() => {
+    if (!user) return;
+    let timer = null;
+    const run = () => { checkAndNotify(user.username).catch(() => {}); };
+    run();
+    const onVis = () => { if (document.visibilityState === 'visible') run(); };
+    document.addEventListener('visibilitychange', onVis);
+    timer = setInterval(run, 60 * 60 * 1000); // hourly while open
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      if (timer) clearInterval(timer);
+    };
+  }, [user]);
+  return null;
+}
+
 function App() {
   return (
     <AuthProvider>
+      <ReminderRunner />
       <HashRouter>
         <Routes>
           <Route path="/login" element={
